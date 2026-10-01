@@ -1,74 +1,6 @@
 ---
 name: root-cause-analysis
 description: Investigate incidents, software defects, and data or process failures by forming falsifiable hypotheses, executing tests against available evidence, and iterating to a verified causal explanation or an explicit evidence blocker. Use for root cause analysis, incident investigation, and postmortems.
-
-# The Azure SRE Agent UI can drop the tool list while editing this skill, and restoring it is
-# time-consuming. Preserve this snapshot of the agent's default tools when updating the upload.
-tools:
-  - CheckIfResourceExists
-  - CheckTcpConnectivity
-  - GetAllAzureDataFactoryPipelinesStatus
-  - GetAllAzureFrontDoorEndpointOriginsStatus
-  - GetAppSetting
-  - GetArmResourceAsJson
-  - GetAzCliHelp
-  - GetTlsSettings
-  - RunAzCliReadCommands
-  - WaitInMilliSeconds
-  - FetchGithubIssue
-  - FetchGithubIssueComments
-  - FetchGithubIssues
-  - FetchGithubSecurityDependabotAlerts
-  - FindConnectedGitHubRepo
-  - FindConnectedRepositoryForAzureDevOps
-  - GetIaCForGitHub
-  - GetUserOrganizations
-  - GetAnalysis
-  - GetTaskExecutionHistory
-  - ListScheduledTasks
-  - AnalyzeDeploymentFailures
-  - GetActivityLogsSummary
-  - GetChangeHistory
-  - SearchIncidentKnowledge
-  - SearchMemory
-  - ShowChangeDiffViewer
-  - ExecuteClusterKustoQuery
-  - GetMetricTimeSeriesElementsForAzureResource
-  - KustoClient
-  - ListAvailableMetrics
-  - QueryAppInsightsByAppId
-  - QueryAppInsightsByResourceId
-  - QueryLogAnalyticsByResourceId
-  - QueryLogAnalyticsByWorkspaceId
-  - ValidateQuery
-  - GetDimensionNames
-  - CompareRuns
-  - CompareWithLastSuccessfulRun
-  - DiscoverPipelinesForRepo
-  - GetBuildDetails
-  - GetBuildTimeline
-  - GetPipelineRunHistory
-  - GetPipelineRunStatus
-  - GetTaskLogExcerpt
-  - InvestigateBuildFailure
-  - GetCurrentUtcTime
-  - PlotAreaChartWithCorrelation
-  - PlotBarChart
-  - PlotHeatmap
-  - PlotPieChart
-  - PlotScatter
-  - GenerateRunDiffReport
-  - system-mcp-monitor_monitor_activitylog_list
-  - system-mcp-monitor_monitor_healthmodels_entity_get
-  - system-mcp-monitor_monitor_instrumentation_get-learning-resource
-  - system-mcp-monitor_monitor_metrics_definitions
-  - system-mcp-monitor_monitor_metrics_query
-  - system-mcp-monitor_monitor_resource_log_query
-  - system-mcp-monitor_monitor_table_list
-  - system-mcp-monitor_monitor_table_type_list
-  - system-mcp-monitor_monitor_webtests_get
-  - system-mcp-monitor_monitor_workspace_list
-  - system-mcp-monitor_monitor_workspace_log_query
 ---
 
 # Root Cause Analysis
@@ -80,8 +12,9 @@ Own the investigation from the reported symptom through a reproducible causal ex
 Continue the hypothesis-test loop while a safe, authorized test can materially advance it.
 A plausible explanation, a query proposal, or service recovery is not a completed RCA.
 
-This file is the complete RCA procedure. When assessing hypothesis dispositions in an Azure SRE
-investigation, invoke the sibling `statistical-hypothesis-testing` skill for applicable binary
+This file is the complete hybrid RCA procedure. Begin with every hypothesis, evidence item, and
+other observation the user supplied, including explicitly empty sets. When assessing hypothesis
+dispositions, invoke the sibling `statistical-hypothesis-testing` skill for applicable binary
 rates or average values across supporting and contradicting evidence groups. From those results,
 select statistically significant hypothesis-evidence pairs whose observed direction supports the
 hypothesis. Invoke the sibling `causal-evidence-likelihood` skill only for those selected pairs.
@@ -93,10 +26,37 @@ disposition and completion criteria.
 Use the host's actual tools and existing credentials; the skills grant no access. They cannot
 extend a host execution limit, schedule themselves, or guarantee a discoverable root cause.
 
+## Host Mode and Evidence Expansion
+
+Determine the host mode before invoking an evidence-collection tool:
+
+* Use Azure SRE mode when the host explicitly identifies itself as Azure SRE Agent or exposes a
+  distinctive Azure SRE tool from `references/azure-sre-tools.md`, such as `GetAnalysis`,
+  `SearchIncidentKnowledge`, or `ExecuteClusterKustoQuery`. General Azure capability alone does
+  not establish Azure SRE mode.
+* In Azure SRE mode, read `references/azure-sre-tools.md` and automatically invoke every relevant,
+  safe, read-only catalog tool that can materially test scope, coverage, or a hypothesis. Do not
+  call unrelated tools merely because they are available.
+* Otherwise use generic mode. Inventory available tools, identify the smallest bounded tool action
+  that could expand or validate the evidence, and ask for user approval before invocation. State
+  the tool or tool class, target, evidence sought, scope, and expected risk. One approval may cover
+  a clearly bounded batch; new targets, write effects, or materially broader scope require another
+  approval.
+* If no additional tool is available or approved, continue with supplied evidence and observations.
+  Record collection-dependent tests as `Blocked` rather than presenting supplied claims as
+  independently verified.
+
+In either mode, normalize supplied material before collection. Separate direct observations from
+interpretations, retain user-provided hypotheses, assign stable IDs, record provenance and
+limitations, and formulate additional hypotheses only when unexplained observations or credible
+alternatives justify them.
+
 ## Operating Boundary
 
-* Default to read-only investigation. Run authorized queries and inspections without asking for
-  permission at every step. Use least-privilege connectors and host approval controls as enforcement.
+* Default to read-only investigation. In Azure SRE mode, run relevant authorized read-only queries
+  and inspections without asking for permission at every step. In generic mode, obtain the
+  evidence-expansion approval defined above. Use least-privilege connectors and host approval
+  controls as enforcement.
 * Production experiments, load generation, restarts, deployments, configuration or permission
   changes, external writes, and evidence-altering operations require explicit approval for the
   exact action, scope, risk, rollback, and verification. A request to find a cause is not approval.
@@ -118,7 +78,7 @@ that nothing occurred. Record decisions and observable evidence, not private rea
 
 | Record           | Required fields                                                                                                                                                                                                                                                                                |
 |------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Incident         | ID; reported versus verified failure; expected behavior; impact; affected and unaffected scope; last known good; onset; detection; UTC window; exclusions; authorization and runtime limits                                                                                                    |
+| Investigation    | ID; question or reported versus verified failure; expected behavior or comparison basis; impact when applicable; affected and unaffected scope; last known good, onset, detection, recovery, and absolute window when applicable; exclusions; authorization and runtime limits                 |
 | Source S-nnn     | Resource or repository locator; accessible tool; tables or schema; time coverage and retention; event-time field and zone; sampling, filtering, ingestion delay; upstream lineage and duplicate relationships; access gaps                                                                     |
 | Hypothesis H-nnn | Specific condition and mechanism; necessary predictions; disproof criteria; next discriminating test; supporting and contradicting evidence IDs; missing evidence; disposition; confidence with basis; parent ID if revised                                                                    |
 | Test T-nnn       | Hypothesis or scope question; expected support and refutation outcomes defined before execution; exact query, command, or comparison and parameters; source; absolute time window; control or baseline; execution status; returned result locator; evidence IDs; limitations                   |
@@ -134,7 +94,7 @@ Hypothesis dispositions are `Proposed` or `Testing` while active, then:
 * `Supported`: executed tests support the mechanism and predictions, with contradictions assessed.
   This is a hypothesis disposition, not permission to skip the completion gate.
 * `Disproved`: a reliable, adequately covered observation violates a necessary prediction, or a
-  test establishes that the proposed mechanism cannot explain this incident.
+  test establishes that the proposed mechanism cannot explain this investigation.
 * `Unresolved`: evidence is missing, ambiguous, conflicting, or shared by competing explanations.
 
 Use High confidence only for direct mechanism evidence plus a discriminating test or control,
@@ -146,27 +106,32 @@ Copied observations from multiple tools do not increase independence or confiden
 
 ### 1. Establish the failure and available evidence
 
-Read the incident or issue and recover any prior investigation checkpoint. Identify what failed,
-where, when, compared with what expected behavior, and how impact was measured. Separate reports
-from verified observations. Reconstruct last known good, change, first failure, detection,
-mitigation, and recovery as evidence arrives; label every timeline entry Observed or Inferred.
+Read the user's hypotheses, evidence, observations, reported failure or question, and any prior
+investigation checkpoint. Accept empty starting sets. Identify the outcome to explain, the
+comparison or expected behavior, scope, timing when relevant, and how impact was measured.
+Separate reports and interpretations from verified observations. For incident-like failures,
+reconstruct last known good, change, first failure, detection, mitigation, and recovery as evidence
+arrives; label every timeline entry Observed or Inferred.
 
 If essential scope is missing, first use safe discovery to resolve it. Ask only for the smallest
 missing decision that affects source selection, time interpretation, or authorization. Do not
-invent an incident, target, timezone, or business impact.
+invent an incident, target, timezone, comparison basis, or business impact.
 
-Inventory relevant accessible telemetry, code, deployment and configuration history, tickets,
-and existing test results. Inspect actual tool schemas and source metadata before writing queries.
-Distinguish event time from ingestion time; preserve ambiguous timestamps and assess clock skew.
-Initial collection must answer a named scope or coverage question; avoid an unbounded data dump.
+Inventory relevant accessible records, measurements, telemetry, code, configuration and change
+history, tickets, documents, process observations, datasets, and existing test results. Inspect
+actual tool schemas and source metadata before writing queries. Distinguish event time, observation
+time, collection time, and ingestion time where applicable; preserve ambiguous timestamps and
+assess clock skew. Initial collection must answer a named scope or coverage question; avoid an
+unbounded data dump.
 
 Map source lineage before counting corroboration:
 
-* Application Insights can be a resource-scoped view over a Log Analytics workspace. Verify its
-  workspace linkage rather than treating two query interfaces as two independent observations.
-* ADX and Log Analytics can receive overlapping exports with different filters or schemas.
-  Inspect routing, transformations, update policies, and comparable event identifiers or hashes
-  before asserting independence, duplication, or that one store contains all of another.
+* Two reports, dashboards, tables, or repositories can derive from the same upstream observation.
+  Verify lineage rather than treating separate interfaces as independent evidence.
+* In Azure SRE mode, Application Insights can be a resource-scoped view over a Log Analytics
+  workspace, while Azure Data Explorer and Log Analytics can receive overlapping exports with
+  different filters or schemas. Inspect workspace linkage, routing, transformations, update
+  policies, and comparable identifiers before asserting independence, duplication, or containment.
 * Derived tables, dashboards, summaries, and copies retain their upstream evidence identity.
   Metric counts alone do not prove equal metric values; matching messages do not prove equal
   timestamps or all metadata. Record exactly what the comparison establishes.
@@ -230,7 +195,7 @@ Compare the returned observations with the predictions recorded before the test.
 update confidence and disposition, and state which hypotheses were distinguished and which were
 not. A test compatible with both H-001 and H-002 does not establish either as the root cause.
 
-Before assigning or changing a hypothesis disposition, assess whether its Azure SRE evidence can
+Before assigning or changing a hypothesis disposition, assess whether its evidence can
 be represented as one binary outcome or finite numeric observation per independent instance in
 supporting and contradicting groups. When it can, invoke `statistical-hypothesis-testing` through
 the host skill mechanism and follow the matching binary-rate or average-value path in full. Define
@@ -331,12 +296,13 @@ stated finding; an untested theory must not become a definitive corrective actio
 
 ## Checkpoint and Resume
 
-At each completed test cycle, update a compact checkpoint in the host's approved incident/thread
-state or artifact storage when available. Persist only investigation state, not changes to the
-system under investigation. If no durable storage tool is available, emit the checkpoint in the
+At each completed test cycle, update a compact checkpoint in the host's approved investigation,
+thread, or artifact storage when available. Persist only investigation state, not changes to the
+subject under investigation. If no durable storage tool is available, emit the checkpoint in the
 thread and disclose that cross-thread or post-compaction recovery is not guaranteed.
 
-The checkpoint contains incident scope and absolute windows, authorization boundary, source map
+The checkpoint contains the investigation question, scope and applicable absolute windows,
+host mode, authorization boundary, source map
 and coverage gaps, normalized timeline, H/T/E records and locators, current causal account,
 contradictions, tests not yet executed, next discriminating test with parameters, stop state if any,
 and exact evidence/access needed to resume. Preserve disproved and superseded hypotheses.
@@ -344,12 +310,13 @@ Keep detailed results behind approved locators; do not compress away falsificati
 failed tests, uncertainty, provenance, or decisive observations.
 
 Before a known host limit, handoff, or pause, save or emit the latest checkpoint. Do not claim
-background continuation unless the host actually provides and has authorized it. SRE Agent may
-unload skills or clear active skills on compaction. On resume, reload this SKILL.md through the
-available skill mechanism, recover the checkpoint, verify current access and evidence freshness,
-and continue from the next unresolved test. Do not silently restart or repeat completed tests
-unless their inputs, coverage, or validity changed. If the checkpoint cannot be recovered, state
-what is missing and reconstruct only from retrievable evidence.
+background continuation unless the host actually provides and has authorized it. A host, including
+Azure SRE Agent, may unload skills or clear active skills on compaction. On resume, reload this
+SKILL.md through the available skill mechanism, recover the checkpoint, redetect host mode, verify
+current access and evidence freshness, and continue from the next unresolved test. Do not silently
+restart or repeat completed tests unless their inputs, coverage, or validity changed. If the
+checkpoint cannot be recovered, state what is missing and reconstruct only from retrievable
+evidence.
 
 ## Stop States
 

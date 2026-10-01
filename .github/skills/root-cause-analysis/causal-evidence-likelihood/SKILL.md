@@ -1,6 +1,6 @@
 ---
 name: causal-evidence-likelihood
-description: 'Assess how Azure SRE evidence changes the plausibility of an RCA hypothesis using a reasoned likelihood ratio.'
+description: 'Assess how one evidence item changes the plausibility of an RCA hypothesis using a reasoned likelihood ratio.'
 ---
 
 # Causal Evidence Likelihood

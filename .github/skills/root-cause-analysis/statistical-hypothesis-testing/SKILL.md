@@ -1,6 +1,6 @@
 ---
 name: statistical-hypothesis-testing
-description: 'Compare binary rates or average values across Azure SRE evidence groups.'
+description: 'Compare binary rates or average values across independent evidence groups during root cause analysis.'
 ---
 
 # Statistical Hypothesis Testing
@@ -8,11 +8,12 @@ description: 'Compare binary rates or average values across Azure SRE evidence g
 ## Goal
 
 Test whether binary evidence rates or average observation values differ between supporting and
-contradicting Azure SRE groups.
+contradicting groups during a root cause investigation.
 
 ## Inputs
 
-* One independent row per Azure server, resource, tenant, or incident instance
+* One independent row per observational unit, such as a server, resource, tenant, process run,
+  transaction, batch, location, participant, or incident instance
 * Group status: supporting or contradicting the hypothesis, such as affected or unaffected
 * One consistently defined observation: binary presence or absence, or a finite numeric value
 * Source, query, UTC window, scope, exclusions, and sampling limitations
@@ -74,9 +75,13 @@ distributions for severe skew and influential outliers. If either group is too s
 variance, or those features make a mean-based model unreliable, report the limitation and do not
 claim the test distinguishes the hypothesis.
 
-Before querying Azure Monitor, Log Analytics, Application Insights, or Azure Data Explorer, verify
-the resource, table, event-time field, UTC window, instance key, source lineage, units, sampling,
-and ingestion coverage. Aggregate to one observation per independent instance before testing.
+Before querying any source, verify the subject, schema, time semantics, observation window,
+independent-unit key, source lineage, units, sampling, filtering, and collection coverage.
+Aggregate to one observation per independent unit before testing.
+
+In Azure SRE mode, sources can include Azure Monitor, Log Analytics, Application Insights, and
+Azure Data Explorer. Use the Azure resource, table, event-time field, UTC window, instance key,
+sampling, and ingestion checks as authoritative source requirements for those observations.
 
 ## Interpretation
 
@@ -93,8 +98,8 @@ Do not convert the result directly into `Supported` or `Disproved`. Return it to
 Return:
 
 * `Test T-nnn`: hypothesis ID; supporting and contradicting group definitions; observation rule and
-  units; executed Azure query and parameters; UTC window; selected test and parameters; execution
-  status; limitations
+  units; executed query, command, comparison, or collection procedure and parameters; applicable
+  absolute window; selected test and parameters; execution status; limitations
 * `Evidence E-nnn`: source and locator; binary counts and rates, or numeric sample sizes, means,
   standard deviations, mean difference, and confidence interval; test statistic and p-value;
   collection time; coverage, lineage, transformation, and redaction notes
