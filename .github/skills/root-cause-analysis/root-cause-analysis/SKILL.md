@@ -1,6 +1,7 @@
 ---
 name: root-cause-analysis
 description: Investigate incidents, software defects, and data or process failures by forming falsifiable hypotheses, executing tests against available evidence, and iterating to a verified causal explanation or an explicit evidence blocker. Use for root cause analysis, incident investigation, and postmortems.
+compatibility: "Requires an Agent Skills host with all three RCA skills installed; Azure SRE mode additionally requires authorized read-only Azure SRE connectors."
 ---
 
 # Root Cause Analysis
@@ -50,6 +51,13 @@ In either mode, normalize supplied material before collection. Separate direct o
 interpretations, retain user-provided hypotheses, assign stable IDs, record provenance and
 limitations, and formulate additional hypotheses only when unexplained observations or credible
 alternatives justify them.
+
+## Related Capability
+
+The `incident-response` prompt is an adjacent entry point for operational triage, diagnosis,
+mitigation, communication, and post-incident documentation. Use this skill when the work requires
+a falsifiable causal investigation and completion-gate assessment. The prompt and any RCA document
+template can consume this skill's findings, but they do not replace its evidence and testing gates.
 
 ## Operating Boundary
 

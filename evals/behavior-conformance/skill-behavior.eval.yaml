@@ -2,12 +2,12 @@
 name: behavior-conformance-skills
 description: >
   Advisory-tier behavior conformance evals for skills exercised through
-  knowledge, tool-trigger, and bleed-detection stimulus shapes. Total: 261
+  knowledge, tool-trigger, and bleed-detection stimulus shapes. Total: 269
   stimuli, including engagement-reporting coverage, Outlook HTML guards, and
-  complete branch coverage for the RPI, prompt-builder, proposal-response, and
-  outcome-hypothesis skill updates. Each tool-trigger stimulus uses at least two
-  graders with AND logic, and the suite-level scoring threshold gates the
-  aggregate pass rate across stimuli.
+  complete branch coverage for the RPI, prompt-builder, proposal-response,
+  outcome-hypothesis, and root-cause-analysis skill updates. Each tool-trigger
+  stimulus uses at least two graders with AND logic, and the suite-level
+  scoring threshold gates the aggregate pass rate across stimuli.
 type: capability
 defaults:
   runs: 3
@@ -5987,3 +5987,173 @@ stimuli:
         name: skill-rpi-review-interrupted-resume-continues
         config:
           pattern: '(?i)^\s*[`*''"]*continue-review[`*''"]*[.!]?\s*$'
+  - name: skill-root-cause-analysis-competing-hypotheses
+    prompt: |
+      Use the `root-cause-analysis` skill. An incident has one plausible
+      explanation, but credible alternatives exist and none has been tested.
+      Choose the required next framing: `competing-hypotheses` or
+      `single-leading-cause`. Return only the chosen value.
+    agent_environment:
+      skills:
+        - ../../.github/skills/root-cause-analysis/root-cause-analysis
+        - ../../.github/skills/root-cause-analysis/statistical-hypothesis-testing
+        - ../../.github/skills/root-cause-analysis/causal-evidence-likelihood
+    tags:
+      category: behavior-conformance
+      skill: root-cause-analysis
+      shape: knowledge
+      advisory: "true"
+      prompt_sha256: 355c1ba8ac0796fe401c499ee1bcb606506b4f50113772a86848d8f060a27dbf
+    graders:
+      - type: output-matches
+        name: rca-forms-competing-hypotheses
+        config:
+          pattern: '(?i)^\s*[`*''"]*competing-hypotheses[`*''"]*[.!]?\s*$'
+  - name: skill-root-cause-analysis-test-execution-status
+    prompt: |
+      Use the `root-cause-analysis` skill to classify two tests. T1 has a
+      written query and expected outcomes but has not been run. T2 was run
+      against the stated source and returned a result locator. Return exactly
+      two lines: `T1: Planned` and `T2: Executed`.
+    agent_environment:
+      skills:
+        - ../../.github/skills/root-cause-analysis/root-cause-analysis
+    tags:
+      category: behavior-conformance
+      skill: root-cause-analysis
+      shape: knowledge
+      advisory: "true"
+      prompt_sha256: 540fd9e1ae51c42689cba5e7816676235c6428e24a0c3e296e5e879cbced8154
+    graders:
+      - type: output-matches
+        name: rca-distinguishes-planned-from-executed
+        config:
+          pattern: '(?i)^\s*T1:[ \t]*Planned[ \t]*\r?\nT2:[ \t]*Executed\s*$'
+  - name: skill-root-cause-analysis-blocked-without-evidence
+    prompt: |
+      Use the `root-cause-analysis` skill. Material testing requires evidence
+      that is unavailable, no authorized collection tool exists, and no
+      supplied observation can distinguish the active causes. Choose the stop
+      state: Complete, Provisional, Inconclusive, Blocked, or Paused. Return
+      only the state.
+    agent_environment:
+      skills:
+        - ../../.github/skills/root-cause-analysis/root-cause-analysis
+    tags:
+      category: behavior-conformance
+      skill: root-cause-analysis
+      shape: knowledge
+      advisory: "true"
+      prompt_sha256: 78722c11c3ffddc45c54a1d10146d753c5da402293163f585b9b87d20851b8c0
+    graders:
+      - type: output-matches
+        name: rca-reports-evidence-blocker
+        config:
+          pattern: '(?i)^\s*[`*''"]*Blocked[`*''"]*[.!]?\s*$'
+  - name: skill-statistical-hypothesis-testing-blocks-dependent-observations
+    prompt: |
+      Use the `statistical-hypothesis-testing` skill. The supporting group
+      contains repeated rows from the same server and the contradicting group
+      contains independent servers. Choose the statistical execution status:
+      `Blocked` or `Executed`. Return only the chosen value.
+    agent_environment:
+      skills:
+        - ../../.github/skills/root-cause-analysis/statistical-hypothesis-testing
+    tags:
+      category: behavior-conformance
+      skill: statistical-hypothesis-testing
+      shape: knowledge
+      advisory: "true"
+      prompt_sha256: f4d7330fc14e4d89a4107911ff510c577c334270eea91b65a2d1c1961d95d9f5
+    graders:
+      - type: output-matches
+        name: statistics-blocks-dependent-observations
+        config:
+          pattern: '(?i)^\s*[`*''"]*Blocked[`*''"]*[.!]?\s*$'
+  - name: skill-root-cause-analysis-routes-eligible-statistics
+    prompt: |
+      Use the RCA skills. There is one binary outcome per independent instance
+      in predefined supporting and contradicting groups, with source, window,
+      scope, and sampling limitations recorded. Which companion skill should
+      assess the group difference? Return only the skill name.
+    agent_environment:
+      skills:
+        - ../../.github/skills/root-cause-analysis/root-cause-analysis
+        - ../../.github/skills/root-cause-analysis/statistical-hypothesis-testing
+    tags:
+      category: behavior-conformance
+      skill: root-cause-analysis
+      shape: knowledge
+      advisory: "true"
+      prompt_sha256: 83cf2b0fe6f172413e4cee0b9fc880df7e54cf7a84a2abd4cc0980dde98d9e4f
+    graders:
+      - type: output-matches
+        name: rca-routes-eligible-group-comparison
+        config:
+          pattern: '(?i)^\s*[`*''"]*statistical-hypothesis-testing[`*''"]*[.!]?\s*$'
+  - name: skill-root-cause-analysis-selects-causal-pairs
+    prompt: |
+      Use the RCA skills to route three hypothesis-evidence pairs after
+      statistical testing. A has p=0.01 and its observed direction supports
+      the hypothesis. B has p=0.01 but its direction contradicts the
+      hypothesis. C has p=0.20 and its direction supports the hypothesis.
+      Return exactly three lines using `causal` or `exclude`: `A: causal`,
+      `B: exclude`, `C: exclude`.
+    agent_environment:
+      skills:
+        - ../../.github/skills/root-cause-analysis/root-cause-analysis
+        - ../../.github/skills/root-cause-analysis/statistical-hypothesis-testing
+        - ../../.github/skills/root-cause-analysis/causal-evidence-likelihood
+    tags:
+      category: behavior-conformance
+      skill: root-cause-analysis
+      shape: knowledge
+      advisory: "true"
+      prompt_sha256: 1f7ad6d384bad3ae3d89829508a491f0a32802a9a3c37b78784d71d9ba950d74
+    graders:
+      - type: output-matches
+        name: rca-selects-significant-supporting-pair-only
+        config:
+          pattern: '(?i)^\s*A:[ \t]*causal[ \t]*\r?\nB:[ \t]*exclude[ \t]*\r?\nC:[ \t]*exclude\s*$'
+  - name: skill-causal-evidence-likelihood-isolates-statistical-output
+    prompt: |
+      Use the `causal-evidence-likelihood` skill. Its input includes a direct
+      observation and mechanism context, but also includes a p-value,
+      confidence interval, and effect size from another skill. Choose the
+      required handling: `use-statistics`, `set-aside-statistics`, or
+      `reject-entire-assessment`. Return only the chosen value.
+    agent_environment:
+      skills:
+        - ../../.github/skills/root-cause-analysis/causal-evidence-likelihood
+    tags:
+      category: behavior-conformance
+      skill: causal-evidence-likelihood
+      shape: knowledge
+      advisory: "true"
+      prompt_sha256: 6a15caf85683701e0d4838b3d3e341db829204b693a1ba5ee6f682003eb551f1
+    graders:
+      - type: output-matches
+        name: causal-assessment-sets-aside-statistics
+        config:
+          pattern: '(?i)^\s*[`*''"]*set-aside-statistics[`*''"]*[.!]?\s*$'
+  - name: skill-root-cause-analysis-preserves-contradiction
+    prompt: |
+      Use the RCA skills. Reliable evidence violates a necessary prediction of
+      the leading hypothesis, while several correlations favor it. Choose the
+      required evidence treatment: `preserve-contradiction` or
+      `discard-as-outlier`. Return only the chosen value.
+    agent_environment:
+      skills:
+        - ../../.github/skills/root-cause-analysis/root-cause-analysis
+        - ../../.github/skills/root-cause-analysis/causal-evidence-likelihood
+    tags:
+      category: behavior-conformance
+      skill: root-cause-analysis
+      shape: knowledge
+      advisory: "true"
+      prompt_sha256: f3a735d294f66ef5925f4d668c08ecfafc1b18d3efecf246106576d55fc167a7
+    graders:
+      - type: output-matches
+        name: rca-preserves-logical-contradiction
+        config:
+          pattern: '(?i)^\s*[`*''"]*preserve-contradiction[`*''"]*[.!]?\s*$'

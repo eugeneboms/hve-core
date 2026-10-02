@@ -1,6 +1,7 @@
 ---
 name: statistical-hypothesis-testing
 description: 'Compare binary rates or average values across independent evidence groups during root cause analysis.'
+compatibility: "Requires an Agent Skills host and a statistical runtime supporting Barnard's exact test and Welch's independent-samples t-test."
 ---
 
 # Statistical Hypothesis Testing

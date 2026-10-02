@@ -3,7 +3,7 @@ title: causal-evidence-likelihood
 description: Assess how one evidence item changes the plausibility of an RCA hypothesis using a reasoned likelihood ratio.
 sidebar_position: 1
 author: Microsoft
-ms.date: 2026-09-30
+ms.date: 2026-10-02
 ms.topic: reference
 keywords:
   - skill
@@ -28,10 +28,25 @@ Assess how one evidence item changes the plausibility of an RCA hypothesis using
 
 ## When to use it
 
-<!-- asset-docs:stub -->
-Describe the situations where this asset is the right choice, and when to reach for a different asset instead.
+Use this companion skill when the RCA workflow selects one statistically significant,
+direction-supporting hypothesis-evidence pair for causal relevance assessment. It is appropriate
+when the evidence observation, provenance, reliability, proposed mechanism, and plausible
+alternatives can be stated independently of the statistical result.
+
+Do not use it to repeat statistical inference, combine dependent evidence, or assign the RCA
+hypothesis disposition. Return `Unassessable` when evidence provenance or meaning is too uncertain
+to support the comparison.
 
 ## Example usage
 
-<!-- asset-docs:stub -->
-Provide a concrete example that shows the asset in action, including representative input and the resulting output.
+```text
+Assess whether E-014 supports H-003: a connection leak in release R exhausted the client pool.
+E-014 directly observes pool-wait growth before request timeouts on release R, while database
+execution latency remained near baseline. Consider delayed telemetry and an unrelated workload
+surge as alternatives. Do not use the statistical-test output in this assessment.
+```
+
+The skill returns the rationales for the evidence under the hypothesis and its negation, direction,
+likelihood-ratio band, representative value when defensible, standardized relevance estimate,
+reasoning confidence, dependence notes, and the next observation that would best calibrate the
+assessment.

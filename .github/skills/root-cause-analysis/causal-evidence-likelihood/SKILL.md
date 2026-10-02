@@ -1,6 +1,7 @@
 ---
 name: causal-evidence-likelihood
 description: 'Assess how one evidence item changes the plausibility of an RCA hypothesis using a reasoned likelihood ratio.'
+compatibility: "Requires an Agent Skills host and the root-cause-analysis companion workflow."
 ---
 
 # Causal Evidence Likelihood
