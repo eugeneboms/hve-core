@@ -83,8 +83,8 @@ synthetic regression corpus exercises incident, data, software, and process-fail
 
 ## Microsoft documentation
 
-* [Skills: creation, tool attachment, and lifecycle](https://learn.microsoft.com/en-us/azure/sre-agent/skills)
-* [Connectors and data access](https://learn.microsoft.com/en-us/azure/sre-agent/connectors)
+* [Skills: creation, tool attachment, and lifecycle](https://learn.microsoft.com/azure/sre-agent/skills)
+* [Connectors and data access](https://learn.microsoft.com/azure/sre-agent/connectors)
 
 ---
 
