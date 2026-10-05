@@ -76,13 +76,10 @@ available; a checkpoint emitted only in chat does not guarantee cross-thread rec
 The following approved backlog remains outside this change:
 
 * Expand statistical methods beyond binary rates and independent-sample means.
-* Add behavioral coverage that verifies companion skills cannot set the final hypothesis
-  disposition.
-* Add explicit completion-gate coverage for the `Complete` stop state.
-* Add behavioral coverage for approval before unsafe or production-altering actions.
-* Add behavioral coverage for resumable checkpoints on non-complete outcomes.
-* Create a synthetic RCA regression corpus with corresponding cases across varied incident, data,
-  software, and process-failure patterns.
+
+Behavior conformance coverage now verifies companion-skill disposition authority, the `Complete`
+gate, production-action approval, and resumable checkpoints for every non-complete stop state. A
+synthetic regression corpus exercises incident, data, software, and process-failure cases.
 
 ## Microsoft documentation
 

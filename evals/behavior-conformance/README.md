@@ -2,7 +2,7 @@
 title: Behavior Conformance Suite
 description: 'Tier 3 conformance evaluations for prompts, instructions, and skill behavior'
 author: HVE Core Team
-ms.date: 2026-10-03
+ms.date: 2026-10-05
 ---
 
 This directory hosts the behavior conformance suite. It is the only suite under `evals/` that ships in advisory mode by default: failures are reported in the pull request summary but do not block the build until each spec graduates per the graduation policy below.
@@ -35,7 +35,11 @@ The maintained `instructions.eval.yaml` inventory contains 75 stimuli: 73 instru
 * Additional: `docusaurus-edits`, `dt-coach-telemetry`, `experiment-designer`, `disclaimer-language`.
 * Language guidance: Rust test placement, naming, local HTTP mocks, and unit-test network isolation.
 
-The maintained `skill-behavior.eval.yaml` inventory contains 269 stimuli across 77 skill subjects. It covers RPI and HVE Builder workflows, including HVE Builder bounded-read, research-bridge, unavailable-bridge, read-only-review, and review-pass ownership decisions plus direct `rpi-challenger`, `rpi-plan-critique`, pull-request preflight, and RCA evidence-routing contracts.
+The maintained `skill-behavior.eval.yaml` inventory contains 269 stimuli across 77 skill subjects.
+It covers RPI and HVE Builder workflows, including HVE Builder bounded-read, research-bridge,
+unavailable-bridge, read-only-review, and review-pass ownership decisions plus direct
+`rpi-challenger`, `rpi-plan-critique`, pull-request preflight, and RCA evidence-routing,
+disposition-authority, completion, approval, resume, and synthetic regression contracts.
 
 The `backlog-plan` and `backlog-execute` workflow commands carry knowledge coverage plus a read-only boundary assertion and a mutation-safety assertion respectively. Other installed skill domains remain in advisory mode.
 
