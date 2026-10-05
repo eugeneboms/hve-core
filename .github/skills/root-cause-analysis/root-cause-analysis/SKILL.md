@@ -352,7 +352,7 @@ On completion or an explicit stop, return:
 1. **Status and finding:** root cause if Complete; otherwise leading explanation clearly labeled
    unverified. State confidence, scope, impact, and the decisive limitation.
 2. **Source coverage:** list what was actually used to collect evidence and perform the analysis.
-  Use one row per consulted source and the following format:
+   Use one row per consulted source and the following format:
 
   | Source                        | Coverage                                               | Gaps                                                                                    |
   |-------------------------------|--------------------------------------------------------|-----------------------------------------------------------------------------------------|

@@ -56,7 +56,7 @@ Reason in both directions before selecting a value:
 4. Distinguish direct runtime, control, reproduction, or intervention evidence from source-code
    intent, documentation, temporal proximity, and unexplained correlation.
 5. Test logical compatibility explicitly. If `E` cannot be true when `H` is true under the stated
-  mechanism and scope, classify it as contradicting even when statistical observations favor
+   mechanism and scope, classify it as contradicting even when statistical observations favor
   `H`.
 6. Select the narrowest defensible likelihood-ratio band. Prefer `Neutral` when the connection is
   unknown or equally expected under `H` and `not H`.
