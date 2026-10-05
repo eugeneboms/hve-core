@@ -27,12 +27,12 @@ Each tier shares the same advisory contract and manifest-driven gating model as 
 
 The maintained `prompts.eval.yaml` inventory contains 70 stimuli across 47 prompt subjects. Coverage includes RPI orchestration, security review and planning, Design Thinking, Git operations, evaluation authoring, and VEX workflows. Backlog, work-item, and HVE Core pull request coverage moved to `skill-behavior.eval.yaml` when those workflows became skills.
 
-The maintained `instructions.eval.yaml` inventory contains 75 stimuli: 73 instruction-tagged stimuli across 55 instruction subjects, plus two `backlog-management` skill stimuli. Coverage spans:
+The maintained `instructions.eval.yaml` inventory contains 76 stimuli: 68 instruction-tagged stimuli across 50 instruction subjects, plus eight skill-tagged stimuli (six `mural` and two `backlog-management`). Coverage spans:
 
 * Delivery workflows: `ado-create-pull-request`, `ado-get-build-info`, `pull-request`.
 * HVE-Core authoring: `commit-message`, `copilot-tracking`, `hve-builder`, `markdown`, `pull-request`, and `writing-style`.
 * RAI, Accessibility, and Security planning: `accessibility-identity`, `rai-identity`, `rai-risk-classification`, `backlog-handoff`, `sssc-assessment`, and `standards-mapping`.
-* Additional: `docusaurus-edits`, `dt-coach-telemetry`, `experiment-designer`, `disclaimer-language`.
+* Additional: `docusaurus-edits`, `dt-coach-telemetry`, `experiment-designer`, `disclaimer-language`, `skill-security-model`.
 * Language guidance: Rust test placement, naming, local HTTP mocks, and unit-test network isolation.
 
 The maintained `skill-behavior.eval.yaml` inventory contains 269 stimuli across 77 skill subjects.
