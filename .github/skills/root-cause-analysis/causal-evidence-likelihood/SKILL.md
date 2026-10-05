@@ -74,7 +74,7 @@ Reason in both directions before selecting a value:
 Return a band and, when the reasoning supports it, one representative `LR(E)` value. Use the Strong
 bands only when general system reasoning makes `E` nearly entailed by `H` or nearly incompatible
 with it after considering the strongest plausible alternative. If provenance or meaning is too
-uncertain to reason from `E`, return `Unassessable` rather than `Neutral`.
+uncertain to reason from `E`, return `Not Assessed` rather than `Neutral`.
 
 ## Interpretation Constraints
 
@@ -107,7 +107,7 @@ Return:
 * Evidence ID, direct observation, provenance, and reliability
 * `P(E given H)` rationale
 * `P(E given not H)` rationale and strongest plausible alternative
-* Direction: supports, contradicts, neutral, or unassessable
+* Direction: supports, contradicts, neutral, or `Not Assessed`
 * Likelihood-ratio band and representative `LR(E)` value when defensible
 * Implied `q(E)` from the standardized 50% prior, labeled as an elicited relevance estimate
 * Reasoning confidence: Low, Medium, or High, with the decisive limitation

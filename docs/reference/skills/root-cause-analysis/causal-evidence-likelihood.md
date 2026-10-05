@@ -3,7 +3,7 @@ title: causal-evidence-likelihood
 description: Assess how one evidence item changes the plausibility of an RCA hypothesis using a reasoned likelihood ratio.
 sidebar_position: 1
 author: Microsoft
-ms.date: 2026-10-02
+ms.date: 2026-10-05
 ms.topic: reference
 keywords:
   - skill
@@ -34,7 +34,7 @@ when the evidence observation, provenance, reliability, proposed mechanism, and 
 alternatives can be stated independently of the statistical result.
 
 Do not use it to repeat statistical inference, combine dependent evidence, or assign the RCA
-hypothesis disposition. Return `Unassessable` when evidence provenance or meaning is too uncertain
+hypothesis disposition. Return `Not Assessed` when evidence provenance or meaning is too uncertain
 to support the comparison.
 
 ## Example usage
