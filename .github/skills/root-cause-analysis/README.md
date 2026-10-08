@@ -28,6 +28,18 @@ The RCA skill selects one of two host modes:
 Tool availability does not grant data access or permission to alter a system. Enforce read-only
 access, approvals, and production boundaries through host controls.
 
+## Statistical runtime prerequisite
+
+The host must provide an approved code-execution or statistics tool with a pre-existing runtime
+that supports Barnard's exact test and Welch's independent-samples t-test. The package does not
+ship or install that runtime. Do not install or upgrade statistical packages during an
+investigation.
+
+When no approved runtime is available, `statistical-hypothesis-testing` records the test as
+`Blocked` and returns no statistic, confidence interval, degrees of freedom, or p-value. A blocked
+statistical result is excluded from pair selection and summaries. The investigation may continue
+through other executed evidence and eligible causal assessments.
+
 ## Azure SRE installation
 
 1. Open the Azure SRE agent and go to **Builder > Skills**.
@@ -36,8 +48,10 @@ access, approvals, and production boundaries through host controls.
 3. Add each corresponding `SKILL.md` as a skill procedure.
 4. Include the `root-cause-analysis/references/azure-sre-tools.md` reference with the RCA skill.
 5. Attach the Azure SRE tools available to the agent and verify its connector credentials.
-6. Keep write tools disabled for a read-only investigation.
-7. Start a new thread and verify that the host is detected as Azure SRE mode.
+6. Verify whether the host exposes an approved statistical runtime. The cataloged Azure SRE tools
+   do not themselves provide one; without a separate runtime, statistical tests are `Blocked`.
+7. Keep write tools disabled for a read-only investigation.
+8. Start a new thread and verify that the host is detected as Azure SRE mode.
 
 Local repository changes do not update a deployed Azure SRE agent. Upload each changed skill and
 its references to refresh the deployment.
@@ -60,9 +74,9 @@ Example invocation:
 The skill tests predictions before declaring a cause, actively seeks disconfirming evidence,
 tracks source lineage, and preserves exact test parameters and observations. It invokes
 statistical testing for eligible grouped observations and causal evidence likelihood assessment
-for selected statistically significant pairs whose observed direction supports the hypothesis.
-Statistical significance and elicited likelihood ratios inform evidence weighting but cannot
-directly set a hypothesis disposition.
+for valid exploratory and confirmatory hypothesis-evidence pairs under their respective authority
+boundaries. Statistical significance and elicited likelihood ratios inform evidence weighting but
+cannot directly set a hypothesis disposition.
 
 `Complete` means the causal completion gate passed. `Provisional`, `Inconclusive`, `Blocked`, and
 `Paused` are not completed RCAs. The skill cannot guarantee that available evidence contains a
