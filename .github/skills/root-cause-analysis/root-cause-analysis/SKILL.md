@@ -115,13 +115,13 @@ Maintain the following compact records as the investigation proceeds. Use stable
 claims to them. Populate each field or write `Unavailable - <reason>`; an empty field is not proof
 that nothing occurred. Record decisions and observable evidence, not private reasoning.
 
-| Record           | Required fields                                                                                                                                                                                                                                                                                |
-|------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Investigation    | ID; purpose and intended-use boundary; question or reported versus verified failure; expected behavior or comparison basis; impact when applicable; affected and unaffected scope; declared collection scope; host mode; authorization and runtime limits; loop budget; skill, companion, host, and model versions when exposed; domain-review trigger and status; retention and disposal policy |
-| Source S-nnn     | Resource or repository locator; accessible tool; tables or schema; source region and residency; time coverage and retention; event-time field and zone; sampling, filtering, ingestion delay; upstream lineage and duplicate relationships; personal-data locator when applicable; tool-call audit locator; access gaps |
-| Hypothesis H-nnn | Specific condition and mechanism; necessary predictions; disproof criteria; next discriminating test; supporting and contradicting evidence IDs; missing evidence; disposition; confidence with basis; parent ID if revised                                                                    |
-| Test T-nnn       | Hypothesis or scope question; expected support and refutation outcomes defined before execution; redacted query, command, or comparison and parameters; source; absolute time window; control or baseline; execution status; returned result locator; evidence IDs; limitations                   |
-| Evidence E-nnn   | Source-system retrievable locator; test ID; collection time; original event time and zone; normalized time and clock adjustment; direct observation; separate interpretation; reliability with reason; integrity, transformation, truncation, personal-data, and redaction notes                                  |
+| Record           | Required fields                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+|------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Investigation    | ID; purpose and intended-use boundary; question or reported versus verified failure; expected behavior or comparison basis; impact when applicable; affected and unaffected scope; declared collection scope; host mode; authorization and runtime limits; loop budget; skill, companion, host, and model versions when exposed; domain-review trigger and status; retention and disposal policy                                                                                                                         |
+| Source S-nnn     | Resource or repository locator; accessible tool; tables or schema; source region and residency; time coverage and retention; event-time field and zone; sampling, filtering, ingestion delay; upstream lineage and duplicate relationships; personal-data locator when applicable; tool-call audit locator; access gaps                                                                                                                                                                                                  |
+| Hypothesis H-nnn | Specific condition and mechanism; necessary predictions; disproof criteria; next discriminating test; supporting and contradicting evidence IDs; missing evidence; disposition; confidence with basis; parent ID if revised                                                                                                                                                                                                                                                                                              |
+| Test T-nnn       | Hypothesis or scope question; expected support and refutation outcomes defined before execution; redacted query, command, or comparison and parameters; source; absolute time window; control or baseline; execution status; returned result locator; evidence IDs; limitations                                                                                                                                                                                                                                          |
+| Evidence E-nnn   | Source-system retrievable locator; test ID; collection time; original event time and zone; normalized time and clock adjustment; direct observation; separate interpretation; reliability with reason; integrity, transformation, truncation, personal-data, and redaction notes                                                                                                                                                                                                                                         |
 | Likelihood L-nnn | Hypothesis ID; evidence ID; evidence class (`Exploratory` or `Confirmatory`) and classification rationale; five-band assessment; representative likelihood ratio only when defensible; implied assessment band from a standardized 50% prior; rationale under the hypothesis and its negation; strongest alternative; elicitation host, exposed model identity, and assessment time; reasoning confidence; dependence and calibration limitations; permitted use; next observation that would most change the assessment |
 
 Test execution statuses are `Planned`, `Executed`, `Failed`, or `Blocked`. An executed test can be
@@ -426,7 +426,7 @@ evidence.
 
 | Status       | When to use                                                                                                                    | Required next step                                                                          |
 |--------------|--------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------|
-| Complete     | The completion gate passes and the accountable human records sign-off; the root cause is identified within the declared scope. | Return cited findings, cause-linked actions, and the AI-assisted disclosure.                 |
+| Complete     | The completion gate passes and the accountable human records sign-off; the root cause is identified within the declared scope. | Return cited findings, cause-linked actions, and the AI-assisted disclosure.                |
 | Provisional  | A causal account has support, but a material gap remains and no useful authorized test can currently close it.                 | Name the unverified link, competing explanation, and exact evidence needed.                 |
 | Inconclusive | Available reliable evidence cannot distinguish causes after useful accessible tests are exhausted.                             | Preserve alternatives and specify the discriminating observation or instrumentation needed. |
 | Blocked      | Missing scope, access, tools, approval, or evidence integrity prevents material testing and no useful authorized path remains. | Identify the narrow blocker and who or what can resolve it.                                 |
@@ -459,9 +459,9 @@ On completion or an explicit stop, return:
 2. **Source coverage:** list what was actually used to collect evidence and perform the analysis.
    Use one row per consulted source and the following format:
 
-  | Source                        | Coverage                                               | Gaps                                                                                    |
-  |-------------------------------|--------------------------------------------------------|-----------------------------------------------------------------------------------------|
-  | S-nnn: source name and system | data, records, code, telemetry, tables, and scope used | missing scope, time, hosts, fields, lineage, sampling, access, or integrity limitations |
+| Source                        | Coverage                                               | Gaps                                                                                    |
+|-------------------------------|--------------------------------------------------------|-----------------------------------------------------------------------------------------|
+| S-nnn: source name and system | data, records, code, telemetry, tables, and scope used | missing scope, time, hosts, fields, lineage, sampling, access, or integrity limitations |
 
   Include source IDs and distinguish independent sources from derived or overlapping views.
   Add an `Inaccessible` row for relevant sources that could not be consulted. In its `Coverage`
@@ -475,9 +475,9 @@ On completion or an explicit stop, return:
 
   Include exactly these columns for every confirmatory hypothesis-evidence pair:
 
-  | Hypothesis              | Evidence                  | Direction              | Adjusted p-value or N/A | Causal likelihood                      |
-  |-------------------------|---------------------------|------------------------|------------------------:|----------------------------------------|
-  | H-nnn: exact hypothesis | E-nnn: direct observation | supports or contradicts |         value or reason | one five-band assessment or Unassessed |
+| Hypothesis              | Evidence                  | Direction               | Adjusted p-value or N/A | Causal likelihood                      |
+|-------------------------|---------------------------|-------------------------|------------------------:|----------------------------------------|
+| H-nnn: exact hypothesis | E-nnn: direct observation | supports or contradicts |         value or reason | one five-band assessment or Unassessed |
 
   For a statistically applicable pair, state the test-family size and describe the adjusted
   p-value as multiplicity-corrected evidence against the null model, not as the probability that
@@ -492,9 +492,9 @@ On completion or an explicit stop, return:
 
   Include exactly these columns for every exploratory hypothesis-evidence pair:
 
-  | Hypothesis              | Evidence                  | Why exploratory         | Direction                         | Causal likelihood                      | Next confirmation            |
-  |-------------------------|---------------------------|-------------------------|-----------------------------------|----------------------------------------|------------------------------|
-  | H-nnn: exact hypothesis | E-nnn: direct observation | classification rationale | supports, contradicts, or neutral | one five-band assessment or Unassessed | smallest independent test    |
+| Hypothesis              | Evidence                  | Why exploratory          | Direction                         | Causal likelihood                      | Next confirmation         |
+|-------------------------|---------------------------|--------------------------|-----------------------------------|----------------------------------------|---------------------------|
+| H-nnn: exact hypothesis | E-nnn: direct observation | classification rationale | supports, contradicts, or neutral | one five-band assessment or Unassessed | smallest independent test |
 
   Exploratory assessments are reported for transparency and test planning. They do not
   independently support a hypothesis disposition or the completion gate. When no confirmatory

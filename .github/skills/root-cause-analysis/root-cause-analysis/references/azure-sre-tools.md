@@ -49,34 +49,34 @@ Classifications use these values:
 
 ### Azure resource and connectivity
 
-| Tool                                    | Operation    | Sensitivity | Auto |
-|-----------------------------------------|--------------|-------------|------|
-| `CheckIfResourceExists`                 | Read         | Operational | Yes  |
-| `CheckTcpConnectivity`                  | Active probe | Operational | No   |
-| `GetAllAzureDataFactoryPipelinesStatus` | Read         | Operational | Yes  |
-| `GetAllAzureFrontDoorEndpointOriginsStatus` | Read    | Operational | Yes  |
-| `GetAppSetting`                         | Read         | Secret-risk | No   |
-| `GetArmResourceAsJson`                  | Read         | Operational | Yes  |
-| `GetAzCliHelp`                          | Read         | Operational | Yes  |
-| `GetTlsSettings`                        | Read         | Operational | Yes  |
-| `RunAzCliReadCommands`                  | Read         | Operational | No   |
-| `WaitInMilliSeconds`                    | Delay        | Operational | No   |
+| Tool                                        | Operation    | Sensitivity | Auto |
+|---------------------------------------------|--------------|-------------|------|
+| `CheckIfResourceExists`                     | Read         | Operational | Yes  |
+| `CheckTcpConnectivity`                      | Active probe | Operational | No   |
+| `GetAllAzureDataFactoryPipelinesStatus`     | Read         | Operational | Yes  |
+| `GetAllAzureFrontDoorEndpointOriginsStatus` | Read         | Operational | Yes  |
+| `GetAppSetting`                             | Read         | Secret-risk | No   |
+| `GetArmResourceAsJson`                      | Read         | Operational | Yes  |
+| `GetAzCliHelp`                              | Read         | Operational | Yes  |
+| `GetTlsSettings`                            | Read         | Operational | Yes  |
+| `RunAzCliReadCommands`                      | Read         | Operational | No   |
+| `WaitInMilliSeconds`                        | Delay        | Operational | No   |
 
 Use `WaitInMilliSeconds` only for a documented ingestion delay or retry backoff. Cap each wait at
 30 seconds and record the reason. Never use it to imply background continuation.
 
 ### Repository and work tracking
 
-| Tool                                      | Operation | Sensitivity | Auto |
-|-------------------------------------------|-----------|-------------|------|
-| `FetchGithubIssue`                        | Read      | Operational | Yes  |
-| `FetchGithubIssueComments`                | Read      | Personal    | Yes  |
-| `FetchGithubIssues`                       | Read      | Operational | Yes  |
-| `FetchGithubSecurityDependabotAlerts`     | Read      | Operational | Yes  |
-| `FindConnectedGitHubRepo`                 | Read      | Operational | Yes  |
-| `FindConnectedRepositoryForAzureDevOps`   | Read      | Operational | Yes  |
-| `GetIaCForGitHub`                         | Read      | Source      | Yes  |
-| `GetUserOrganizations`                    | Read      | Personal    | No   |
+| Tool                                    | Operation | Sensitivity | Auto |
+|-----------------------------------------|-----------|-------------|------|
+| `FetchGithubIssue`                      | Read      | Operational | Yes  |
+| `FetchGithubIssueComments`              | Read      | Personal    | Yes  |
+| `FetchGithubIssues`                     | Read      | Operational | Yes  |
+| `FetchGithubSecurityDependabotAlerts`   | Read      | Operational | Yes  |
+| `FindConnectedGitHubRepo`               | Read      | Operational | Yes  |
+| `FindConnectedRepositoryForAzureDevOps` | Read      | Operational | Yes  |
+| `GetIaCForGitHub`                       | Read      | Source      | Yes  |
+| `GetUserOrganizations`                  | Read      | Personal    | No   |
 
 ### Investigation and change history
 
@@ -94,18 +94,18 @@ Use `WaitInMilliSeconds` only for a documented ingestion delay or retry backoff.
 
 ### Logs, metrics, and queries
 
-| Tool                                           | Operation | Sensitivity | Auto |
-|------------------------------------------------|-----------|-------------|------|
-| `ExecuteClusterKustoQuery`                     | Read      | Personal    | Yes  |
-| `GetDimensionNames`                            | Read      | Operational | Yes  |
-| `GetMetricTimeSeriesElementsForAzureResource`  | Read      | Operational | Yes  |
-| `KustoClient`                                  | Read      | Personal    | No   |
-| `ListAvailableMetrics`                         | Read      | Operational | Yes  |
-| `QueryAppInsightsByAppId`                      | Read      | Personal    | Yes  |
-| `QueryAppInsightsByResourceId`                 | Read      | Personal    | Yes  |
-| `QueryLogAnalyticsByResourceId`                | Read      | Personal    | Yes  |
-| `QueryLogAnalyticsByWorkspaceId`               | Read      | Personal    | Yes  |
-| `ValidateQuery`                                | Read      | Operational | Yes  |
+| Tool                                          | Operation | Sensitivity | Auto |
+|-----------------------------------------------|-----------|-------------|------|
+| `ExecuteClusterKustoQuery`                    | Read      | Personal    | Yes  |
+| `GetDimensionNames`                           | Read      | Operational | Yes  |
+| `GetMetricTimeSeriesElementsForAzureResource` | Read      | Operational | Yes  |
+| `KustoClient`                                 | Read      | Personal    | No   |
+| `ListAvailableMetrics`                        | Read      | Operational | Yes  |
+| `QueryAppInsightsByAppId`                     | Read      | Personal    | Yes  |
+| `QueryAppInsightsByResourceId`                | Read      | Personal    | Yes  |
+| `QueryLogAnalyticsByResourceId`               | Read      | Personal    | Yes  |
+| `QueryLogAnalyticsByWorkspaceId`              | Read      | Personal    | Yes  |
+| `ValidateQuery`                               | Read      | Operational | Yes  |
 
 ### Pipelines and builds
 
@@ -137,14 +137,14 @@ Use `WaitInMilliSeconds` only for a documented ingestion delay or retry backoff.
 
 | Tool                                                               | Operation | Sensitivity | Auto |
 |--------------------------------------------------------------------|-----------|-------------|------|
-| `system-mcp-monitor_monitor_activitylog_list`                       | Read      | Personal    | Yes  |
-| `system-mcp-monitor_monitor_healthmodels_entity_get`                | Read      | Operational | Yes  |
-| `system-mcp-monitor_monitor_instrumentation_get-learning-resource`  | Read      | Operational | No   |
-| `system-mcp-monitor_monitor_metrics_definitions`                    | Read      | Operational | Yes  |
-| `system-mcp-monitor_monitor_metrics_query`                          | Read      | Operational | Yes  |
-| `system-mcp-monitor_monitor_resource_log_query`                     | Read      | Personal    | Yes  |
-| `system-mcp-monitor_monitor_table_list`                             | Read      | Operational | Yes  |
-| `system-mcp-monitor_monitor_table_type_list`                        | Read      | Operational | Yes  |
-| `system-mcp-monitor_monitor_webtests_get`                           | Read      | Operational | Yes  |
-| `system-mcp-monitor_monitor_workspace_list`                         | Read      | Operational | Yes  |
-| `system-mcp-monitor_monitor_workspace_log_query`                    | Read      | Personal    | Yes  |
+| `system-mcp-monitor_monitor_activitylog_list`                      | Read      | Personal    | Yes  |
+| `system-mcp-monitor_monitor_healthmodels_entity_get`               | Read      | Operational | Yes  |
+| `system-mcp-monitor_monitor_instrumentation_get-learning-resource` | Read      | Operational | No   |
+| `system-mcp-monitor_monitor_metrics_definitions`                   | Read      | Operational | Yes  |
+| `system-mcp-monitor_monitor_metrics_query`                         | Read      | Operational | Yes  |
+| `system-mcp-monitor_monitor_resource_log_query`                    | Read      | Personal    | Yes  |
+| `system-mcp-monitor_monitor_table_list`                            | Read      | Operational | Yes  |
+| `system-mcp-monitor_monitor_table_type_list`                       | Read      | Operational | Yes  |
+| `system-mcp-monitor_monitor_webtests_get`                          | Read      | Operational | Yes  |
+| `system-mcp-monitor_monitor_workspace_list`                        | Read      | Operational | Yes  |
+| `system-mcp-monitor_monitor_workspace_log_query`                   | Read      | Personal    | Yes  |

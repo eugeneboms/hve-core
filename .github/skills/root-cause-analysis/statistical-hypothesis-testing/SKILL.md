@@ -64,8 +64,8 @@ $$
 Test $H_0: p_1 = p_0$ against $H_A: p_1 \ne p_0$ with Barnard's exact test, an unconditional
 two-sample binomial test for the $2 \times 2$ table:
 
-|                     | Evidence present | Evidence absent |
-|---------------------|-----------------:|----------------:|
+|                   | Evidence present | Evidence absent |
+|-------------------|-----------------:|----------------:|
 | Affected cohort   |            $c_1$ |       $n_1-c_1$ |
 | Unaffected cohort |            $c_0$ |       $n_0-c_0$ |
 
