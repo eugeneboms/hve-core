@@ -89,11 +89,10 @@ confidence intervals, or measured probabilities. Boundary values are approximate
 make assessments consistent. When uncertainty could place the evidence in more than one category,
 select the less decisive category and record the uncertainty.
 
-Return the category and its uncalibrated `LR(E)` range. Include a representative `LR(E)` value only
-when it clarifies the assessment, and express it with no more than one significant digit. Use a
-Strong category only when the evidence is approximately an order of magnitude more likely under
-one side of the comparison after considering the strongest plausible alternative. If the
-provenance, meaning, mechanism, or alternatives are too uncertain to identify even an
+Return the category and its uncalibrated `LR(E)` range without selecting a representative point
+value. Use a Strong category only when the evidence is approximately an order of magnitude more
+likely under one side of the comparison after considering the strongest plausible alternative. If
+the provenance, meaning, mechanism, or alternatives are too uncertain to identify even an
 order-of-magnitude range, return `Unassessed` rather than `Neutral or unclear`.
 
 ## Interpretation Constraints
@@ -131,7 +130,7 @@ Return:
 * `P(E given H)` rationale
 * `P(E given not H)` rationale and strongest plausible alternative
 * Direction: supports, contradicts, neutral, or `Unassessed`
-* Likelihood-ratio band and representative `LR(E)` value when defensible
+* Likelihood-ratio band
 * Implied `q(E)` band from the standardized 50% prior, labeled as an uncalibrated, model-elicited
   relevance estimate
 * Elicitation provenance: host, model identity when exposed, and assessment time

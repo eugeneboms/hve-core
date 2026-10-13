@@ -47,6 +47,5 @@ surge as alternatives. Do not use the statistical-test output in this assessment
 ```
 
 The skill returns the rationales for the evidence under the hypothesis and its negation, direction,
-likelihood-ratio band, representative value when defensible, standardized relevance estimate,
-reasoning confidence, dependence notes, and the next observation that would best calibrate the
-assessment.
+likelihood-ratio band, standardized relevance estimate, reasoning confidence, dependence notes,
+and the next observation that would best calibrate the assessment.
