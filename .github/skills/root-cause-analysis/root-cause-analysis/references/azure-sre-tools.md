@@ -45,6 +45,13 @@ Classifications use these values:
 * Auto indicates whether the operation may run without case-specific approval after all RCA scope,
   authorization, and schema gates pass.
 
+`GetAnalysis`, `SearchIncidentKnowledge`, and `SearchMemory` return historical interpretation,
+even when an entry is otherwise eligible for automatic invocation. Their output may seed
+hypotheses or identify primary-source locators, but it is not E-nnn and cannot independently
+corroborate a claim, influence a disposition, or satisfy the completion gate. Reverify every
+material claim against its primary source and record the resulting observation as new evidence.
+A prior L-nnn cannot be imported as causal support.
+
 ## Catalog
 
 ### Azure resource and connectivity

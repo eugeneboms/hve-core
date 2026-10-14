@@ -3,7 +3,7 @@ title: statistical-hypothesis-testing
 description: Compare binary rates or average values across affected and unaffected cohorts during root cause analysis.
 sidebar_position: 3
 author: Microsoft
-ms.date: 2026-10-08
+ms.date: 2026-10-14
 ms.topic: reference
 keywords:
   - skill
@@ -12,12 +12,12 @@ keywords:
 ---
 
 <!-- BEGIN AUTO-GENERATED: metadata -->
-| Field       | Value                                                                                            |
-|-------------|--------------------------------------------------------------------------------------------------|
-| Kind        | skill                                                                                            |
-| Source      | `.github/skills/root-cause-analysis/statistical-hypothesis-testing`                              |
-| Invocation  | Invoked directly as `/statistical-hypothesis-testing`, or loaded on demand by referencing agents |
-| Interactive | No                                                                                               |
+| Field       | Value                                                               |
+|-------------|---------------------------------------------------------------------|
+| Kind        | skill                                                               |
+| Source      | `.github/skills/root-cause-analysis/statistical-hypothesis-testing` |
+| Invocation  | Loaded on demand by referencing agents                              |
+| Interactive | No                                                                  |
 <!-- END AUTO-GENERATED: metadata -->
 
 ## What it does
@@ -28,25 +28,33 @@ Compare binary rates or average values across affected and unaffected cohorts du
 
 ## When to use it
 
-Use this companion skill when an RCA has independent affected and unaffected cohorts and one
-consistently defined binary outcome or finite numeric observation per instance. It compares binary
+This internal companion is loaded only when a
+[root-cause-analysis](root-cause-analysis) investigation has independent affected and unaffected
+cohorts and one consistently defined binary outcome or finite numeric observation per instance.
+The root workflow supplies the investigation and test IDs, scope, authorization, prepared input
+and hash, cohort definitions, observation rule, and requested result. The companion compares binary
 rates with an unconditional exact two-sample binomial test or its controlled fallback and compares
 meaningful averages with Welch's independent-samples t-test.
 
-Do not use it for duplicated, paired, repeated, censored, dependent, or outcome-selected
-observations. The result informs the RCA evidence assessment but does not establish causality or
-set a hypothesis disposition by itself.
+Do not invoke it directly or use it for duplicated, paired, repeated, censored, dependent, or
+outcome-selected observations. It fails closed without the internal invocation context. The result
+informs the RCA evidence assessment but does not establish causality or set a hypothesis
+disposition by itself.
+
+A qualified human reviewer must validate cohort definitions, execution provenance, assumptions,
+and limitations before the result informs a postmortem or corrective action. Do not use this skill
+as the sole basis for legal, safety, regulatory, or individual-performance determinations.
 
 ## Example usage
 
 ```text
-Compare the timeout rate for 18 instances assigned to the incident-affected deployment with the
-timeout rate for 20 comparable instances assigned to an unaffected deployment. Deployment impact
-was established from routing and availability records before timeout values were inspected. Each
-row represents one independent instance, and the observation is whether at least one timeout
-occurred during the same UTC window.
+The root RCA workflow loads this companion for RCA-007 and T-012 with the approved runtime call,
+source and prepared-input locators, input SHA-256 hash, and complete cohort definitions. The
+prepared table contains 18 independent instances assigned to the incident-affected deployment and
+20 comparable instances assigned to an unaffected deployment. Deployment impact was established
+before timeout values were inspected.
 ```
 
-The skill returns the cohort definitions, selected test, exact query and parameters, sample sizes,
-rates or summary statistics, test statistic, p-value or certified p-value interval, limitations,
-and a non-causal conclusion for the RCA record.
+The skill returns the cohort definitions, selected test, exact runtime invocation and parameters,
+sample sizes, rates or summary statistics, test statistic, p-value or certified p-value interval,
+limitations, and a non-causal conclusion for the RCA record.

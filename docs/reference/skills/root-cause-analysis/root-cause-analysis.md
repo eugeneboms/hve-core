@@ -3,7 +3,7 @@ title: root-cause-analysis
 description: "Investigate incidents, software defects, and data or process failures by forming falsifiable hypotheses, executing tests against available evidence, and iterating to a verified causal explanation or an explicit evidence blocker. Use for root cause analysis, incident investigation, and postmortems."
 sidebar_position: 2
 author: Microsoft
-ms.date: 2026-10-02
+ms.date: 2026-10-14
 ms.topic: reference
 keywords:
   - skill
@@ -32,10 +32,20 @@ cause is not yet established. It is appropriate when evidence can be gathered or
 competing explanations need to be tested, and the result must distinguish a verified cause from a
 provisional or blocked investigation.
 
-Use the incident-response prompt instead when you need the broader operational workflow of triage,
-diagnosis, mitigation, communication, and post-incident documentation. Use an ordinary debugging
-workflow for a localized defect whose cause is already reproducible and does not require competing
-hypotheses or evidence-source analysis.
+Use the [incident-response](../../prompts/security/incident-response) prompt instead when you need
+the broader operational workflow of triage, diagnosis, mitigation, communication, and
+post-incident documentation. Use an ordinary debugging workflow for a localized defect whose cause
+is already reproducible and does not require competing hypotheses or evidence-source analysis.
+
+Results, including a `Complete` status, are AI-assessed and need validation by a qualified human
+reviewer before adoption. Do not use the output as the sole basis for regulatory incident reports,
+safety determinations, legal conclusions, or evaluating an individual's performance or conduct.
+
+Install and govern the skill with the bundled `references/setup-and-governance.md` guidance. The
+[statistical-hypothesis-testing](statistical-hypothesis-testing) and
+[causal-evidence-likelihood](causal-evidence-likelihood) companion skills provide bounded
+assessments but do not set RCA dispositions. They are internal-only capabilities that fail closed
+without an invocation context from this root workflow.
 
 ## Example usage
 
