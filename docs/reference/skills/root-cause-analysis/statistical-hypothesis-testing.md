@@ -3,7 +3,7 @@ title: statistical-hypothesis-testing
 description: Compare binary rates or average values across affected and unaffected cohorts during root cause analysis.
 sidebar_position: 3
 author: Microsoft
-ms.date: 2026-10-14
+ms.date: 2026-10-15
 ms.topic: reference
 keywords:
   - skill
@@ -29,7 +29,7 @@ Compare binary rates or average values across affected and unaffected cohorts du
 ## When to use it
 
 This internal companion is loaded only when a
-[root-cause-analysis](root-cause-analysis) investigation has independent affected and unaffected
+[root-cause-analysis](./) investigation has independent affected and unaffected
 cohorts and one consistently defined binary outcome or finite numeric observation per instance.
 The root workflow supplies the investigation and test IDs, scope, authorization, prepared input
 and hash, cohort definitions, observation rule, and requested result. The companion compares binary

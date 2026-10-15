@@ -1,4 +1,4 @@
-# cspell:ignore reconcil appl assum declin fabricat saturat flexib modif ying rewrit overwrit rederive narrat pathspecs reinitializ ETSI summarise ttest
+# cspell:ignore reconcil appl assum declin fabricat saturat flexib modif ying rewrit overwrit rederive narrat pathspecs reinitializ ETSI summarise ttest falsif independen
 name: behavior-conformance-skills
 description: >
   Advisory-tier behavior conformance evals for skills exercised through
@@ -6155,7 +6155,7 @@ stimuli:
       prompt_sha256: 67994885bff319384c1e50460c3426df669258435c98d737444d9b4f1fe60421
     graders:
       - type: output-matches
-        name: skill-statistical-hypothesis-testing-blocks-dependent-obser
+        name: skill-statistical-blocks-dependent-observations
         config:
           pattern: '(?is)(?=[\s\S]*\bBlocked\b)(?=[\s\S]*(?:independen|repeated|same[ \t]+server))'
   - name: skill-statistical-hypothesis-testing-blocks-observation-defined-cohorts
@@ -6470,7 +6470,7 @@ stimuli:
       prompt_sha256: fc14da171882c9135401c1783d6046c39141306121e8a9e46e26dc6bfbf38a8d
     graders:
       - type: output-matches
-        name: skill-causal-evidence-likelihood-isolates-statistical-outpu
+        name: skill-causal-likelihood-isolates-statistical-output
         config:
           pattern: '(?is)(?=[\s\S]*(?:set[ \t-]+aside|exclude|do not use|ignore)[\s\S]*(?:p-value|confidence interval|effect size|statistic))(?=[\s\S]*(?:direct observation|mechanism|evidence))'
   - name: skill-root-cause-analysis-preserves-contradiction

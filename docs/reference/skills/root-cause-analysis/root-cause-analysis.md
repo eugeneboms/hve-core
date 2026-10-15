@@ -3,7 +3,7 @@ title: root-cause-analysis
 description: "Investigate incidents, software defects, and data or process failures by forming falsifiable hypotheses, executing tests against available evidence, and iterating to a verified causal explanation or an explicit evidence blocker. Use for root cause analysis, incident investigation, and postmortems."
 sidebar_position: 2
 author: Microsoft
-ms.date: 2026-10-14
+ms.date: 2026-10-15
 ms.topic: reference
 keywords:
   - skill
@@ -32,7 +32,7 @@ cause is not yet established. It is appropriate when evidence can be gathered or
 competing explanations need to be tested, and the result must distinguish a verified cause from a
 provisional or blocked investigation.
 
-Use the [incident-response](../../prompts/security/incident-response) prompt instead when you need
+Use the [incident-response](../security/incident-response) skill instead when you need
 the broader operational workflow of triage, diagnosis, mitigation, communication, and
 post-incident documentation. Use an ordinary debugging workflow for a localized defect whose cause
 is already reproducible and does not require competing hypotheses or evidence-source analysis.

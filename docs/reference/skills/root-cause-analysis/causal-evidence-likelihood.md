@@ -3,7 +3,7 @@ title: causal-evidence-likelihood
 description: "Assess how one evidence item changes an RCA hypothesis using an uncalibrated, model-elicited likelihood-ratio band. Use through the root-cause-analysis workflow."
 sidebar_position: 1
 author: Microsoft
-ms.date: 2026-10-14
+ms.date: 2026-10-15
 ms.topic: reference
 keywords:
   - skill
@@ -29,7 +29,7 @@ Assess how one evidence item changes an RCA hypothesis using an uncalibrated, mo
 ## When to use it
 
 This internal companion is loaded only when the
-[root-cause-analysis](root-cause-analysis) workflow selects one eligible hypothesis-evidence pair
+[root-cause-analysis](./) workflow selects one eligible hypothesis-evidence pair
 for causal relevance assessment. It is appropriate when the root workflow provides a complete
 invocation context containing the investigation, hypothesis, and evidence IDs; evidence class;
 observation; provenance; reliability; system context; and plausible alternatives independently of
