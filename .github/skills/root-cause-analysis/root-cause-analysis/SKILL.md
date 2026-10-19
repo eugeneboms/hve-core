@@ -1,7 +1,12 @@
 ---
 name: root-cause-analysis
-description: Investigate incidents, software defects, and data or process failures by forming falsifiable hypotheses, executing tests against available evidence, and iterating to a verified causal explanation or an explicit evidence blocker. Use for root cause analysis, incident investigation, and postmortems.
+description: "Investigate incidents, software defects, and data or process failures by forming falsifiable hypotheses, executing tests against available evidence, and iterating to a verified causal explanation or an explicit evidence blocker. Use when performing root cause analysis, incident investigation, or postmortem analysis."
+license: MIT
 compatibility: "Requires an Agent Skills host with all three RCA skills installed; Azure SRE mode additionally requires authorized read-only Azure SRE connectors."
+metadata:
+  authors: "microsoft/hve-core"
+  spec_version: "1.0"
+  last_updated: "2026-10-19"
 ---
 
 # Root Cause Analysis
@@ -13,16 +18,17 @@ Own the investigation from the reported symptom through a reproducible causal ex
 Continue the hypothesis-test loop while a safe, authorized test can materially advance it.
 A plausible explanation, a query proposal, or service recovery is not a completed RCA.
 
-This file is the complete hybrid RCA procedure. Begin with every hypothesis, evidence item, and
-other observation the user supplied, including explicitly empty sets. When assessing hypothesis
-dispositions, invoke the sibling `statistical-hypothesis-testing` skill for applicable binary
-rates or average values across affected and unaffected cohorts.
+Begin with every hypothesis, evidence item, and other observation the user supplied, including
+explicitly empty sets. When assessing hypothesis dispositions, invoke the sibling
+`statistical-hypothesis-testing` skill for applicable binary rates or average values across
+affected and unaffected cohorts.
 Invoke the sibling `causal-evidence-likelihood` skill for valid exploratory and confirmatory
 hypothesis-evidence pairs while preserving their different authority over disposition and
 completion. For statistically applicable confirmatory pairs, require significance after the
 declared multiple-comparisons correction and assess supporting and contradicting directions
 symmetrically. Other executed evidence remains subject to the investigation's disposition and
 completion criteria.
+
 Use the host's actual tools and existing credentials; the skills grant no access. They cannot
 extend a host execution limit, schedule themselves, or guarantee a discoverable root cause.
 Before production use, follow `references/setup-and-governance.md` for installation, connector,
@@ -193,7 +199,7 @@ it, when, the cited evidence, and any disagreement.
 
 ## Workflow
 
-### 1. Establish the failure and available evidence
+### 1. Establish the Failure and Available Evidence
 
 Read the user's hypotheses, evidence, observations, reported failure or question, and any prior
 investigation checkpoint. Accept empty starting sets. Identify the outcome to explain, the
@@ -230,7 +236,7 @@ Map source lineage before counting corroboration:
   Metric counts alone do not prove equal metric values; matching messages do not prove equal
   timestamps or all metadata. Record exactly what the comparison establishes.
 
-### 2. Form falsifiable competing hypotheses
+### 2. Form Falsifiable Competing Hypotheses
 
 Before deep collection, propose at least two plausible mechanisms when alternatives exist.
 Include a measurement or ingestion artifact if the symptom may reflect observability rather
@@ -249,7 +255,7 @@ Rank the next tests by ability to distinguish causes, evidence reliability, safe
 Do not pick only tests likely to confirm the current favorite. Preserve original hypotheses;
 create a linked successor if their mechanism, predictions, or disproof criteria change.
 
-### 3. Execute the smallest discriminating test
+### 3. Execute the Smallest Discriminating Test
 
 Choose a leading hypothesis and its strongest plausible competitor. Define the support and
 refutation criteria in T-nnn before executing a query or test. Use:
@@ -290,7 +296,7 @@ If a tool fails, record the error. Correct a demonstrated syntax/schema issue or
 authorized source. Retry a transient error only with a reason and within host limits; do not
 repeat an unchanged failing call or broaden scope indiscriminately.
 
-### 4. Evaluate, challenge, and continue
+### 4. Evaluate, Challenge, and Continue
 
 Compare the returned observations with the predictions recorded before the test. Add evidence IDs,
 update confidence and disposition, and state which hypotheses were distinguished and which were
@@ -416,7 +422,7 @@ contradictions once for a materially different test. Continue if one is availabl
 the explicit stop states below with the smallest missing discriminating evidence. Do not loop
 forever or invent certainty to satisfy persistence.
 
-### 5. Apply the root-cause completion gate
+### 5. Apply the Root-Cause Completion Gate
 
 The skill can mark an investigation `Ready for human sign-off` when all criteria below are
 evidenced. Mark it `Complete` only after the accountable human reviewer or incident commander
@@ -444,7 +450,7 @@ material evidence, a corrected source, or an invalidated assumption could change
 Preserve the completed record and issue a linked successor; a later completion supersedes rather
 than overwrites the earlier finding.
 
-### 6. Recommend cause-linked actions
+### 6. Recommend Cause-Linked Actions
 
 After causal assessment, propose actions mapped to supported causes or evidenced control gaps.
 Label temporary containment separately from recurrence prevention. Prefer eliminating the
@@ -531,12 +537,12 @@ while a useful authorized test remains.
 
 On completion or an explicit stop, return the following sections in order.
 
-### 1. Status and finding
+### 1. Status and Finding
 
 Report the root cause if Complete; otherwise report the leading explanation clearly labeled
 unverified. State confidence, scope, impact, and the decisive limitation.
 
-### 2. Source coverage
+### 2. Source Coverage
 
 List what was actually used to collect evidence and perform the analysis. Use one row per
 consulted source and the following format:
@@ -551,12 +557,12 @@ cell, list the unavailable data; in its `Gaps` cell, state what evidence or vali
 could have provided. Do not list a source as used when it was only proposed, assumed, or
 inaccessible. Preserve observed versus inferred timeline events outside this table.
 
-### 3. Hypotheses tested
+### 3. Hypotheses Tested
 
 Report IDs, mechanisms, predictions and disproof criteria, supporting and contradicting evidence,
 dispositions, confidence, and revision lineage.
 
-#### Confirmatory companion assessments
+#### Confirmatory Companion Assessments
 
 Before the table, state the declared significance threshold, the number of statistical comparisons
 run, and that only statistically applicable pairs meeting the threshold in their observed
@@ -580,7 +586,7 @@ uncertainty from a computed statistical result. Do not include statistical test 
 confidence intervals, effect sizes, likelihood ratios, implied probabilities, or causal rationales
 in this compact summary. Keep those details in the investigation record where otherwise required.
 
-#### Exploratory companion assessments
+#### Exploratory Companion Assessments
 
 Include exactly these columns for every exploratory hypothesis-evidence pair:
 
@@ -592,24 +598,24 @@ Exploratory assessments are reported for transparency and test planning. They do
 support a hypothesis disposition or the completion gate. When no confirmatory assessment exists,
 state the resulting non-complete disposition and the smallest independent evidence needed next.
 
-### 4. Executed tests and evidence
+### 4. Executed Tests and Evidence
 
 Report exact queries or commands and parameters with result locators, expected versus actual
 observations, execution statuses, and evidence IDs. Keep planned, failed, blocked, and inconclusive
 tests visible and separate from successful causal tests.
 
-### 5. Causal account and gate
+### 5. Causal Account and Gate
 
 Report the trigger, root causes, contributing factors, control gaps, counterfactual evidence,
 alternatives excluded or retained, and each completion criterion's Pass/Not met assessment with
 citations.
 
-### 6. Actions and open decisions
+### 6. Actions and Open Decisions
 
 Report prioritized cause-linked actions, effectiveness measures, ownership decisions, residual
 risks, and any conditional recommendations.
 
-### 7. Authorization and execution audit
+### 7. Authorization and Execution Audit
 
 Link the separate approval ledger and report counts of approval records, approved and executed
 calls, rejected requests, approvals expired before use, scope violations, and production-affecting
@@ -618,7 +624,7 @@ material exceptions that caused a blocker, changed the investigation, or involve
 provenance, scope mismatch, revocation, or a production-affecting action. Cite approval IDs from
 executed tests.
 
-### 8. Resume checkpoint
+### 8. Resume Checkpoint
 
 Include a checkpoint for every non-Complete outcome, including the next exact test or smallest
 missing prerequisite. State where the detailed investigation record is retained.

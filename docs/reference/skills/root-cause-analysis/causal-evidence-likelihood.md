@@ -1,9 +1,9 @@
 ---
 title: causal-evidence-likelihood
-description: "Assess how one evidence item changes an RCA hypothesis using an uncalibrated, model-elicited likelihood-ratio band. Use through the root-cause-analysis workflow."
+description: "Assess how one evidence item changes an RCA hypothesis using an uncalibrated, model-elicited likelihood-ratio band. Use when root-cause-analysis selects an eligible hypothesis-evidence pair."
 sidebar_position: 1
 author: Microsoft
-ms.date: 2026-10-15
+ms.date: 2026-10-19
 ms.topic: reference
 keywords:
   - skill
@@ -23,7 +23,7 @@ keywords:
 ## What it does
 
 <!-- BEGIN AUTO-GENERATED: overview -->
-Assess how one evidence item changes an RCA hypothesis using an uncalibrated, model-elicited likelihood-ratio band. Use through the root-cause-analysis workflow.
+Assess how one evidence item changes an RCA hypothesis using an uncalibrated, model-elicited likelihood-ratio band. Use when root-cause-analysis selects an eligible hypothesis-evidence pair.
 <!-- END AUTO-GENERATED: overview -->
 
 ## When to use it

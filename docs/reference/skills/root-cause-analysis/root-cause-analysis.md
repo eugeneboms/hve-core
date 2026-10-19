@@ -1,9 +1,9 @@
 ---
 title: root-cause-analysis
-description: "Investigate incidents, software defects, and data or process failures by forming falsifiable hypotheses, executing tests against available evidence, and iterating to a verified causal explanation or an explicit evidence blocker. Use for root cause analysis, incident investigation, and postmortems."
+description: "Investigate incidents, software defects, and data or process failures by forming falsifiable hypotheses, executing tests against available evidence, and iterating to a verified causal explanation or an explicit evidence blocker. Use when performing root cause analysis, incident investigation, or postmortem analysis."
 sidebar_position: 2
 author: Microsoft
-ms.date: 2026-10-15
+ms.date: 2026-10-19
 ms.topic: reference
 keywords:
   - skill
@@ -22,7 +22,7 @@ keywords:
 ## What it does
 
 <!-- BEGIN AUTO-GENERATED: overview -->
-Investigate incidents, software defects, and data or process failures by forming falsifiable hypotheses, executing tests against available evidence, and iterating to a verified causal explanation or an explicit evidence blocker. Use for root cause analysis, incident investigation, and postmortems.
+Investigate incidents, software defects, and data or process failures by forming falsifiable hypotheses, executing tests against available evidence, and iterating to a verified causal explanation or an explicit evidence blocker. Use when performing root cause analysis, incident investigation, or postmortem analysis.
 <!-- END AUTO-GENERATED: overview -->
 
 ## When to use it

@@ -1,9 +1,9 @@
 ---
 title: statistical-hypothesis-testing
-description: Compare binary rates or average values across affected and unaffected cohorts during root cause analysis.
+description: Compare binary rates or average values across affected and unaffected cohorts during root cause analysis. Use when root-cause-analysis selects an applicable affected-versus-unaffected cohort comparison.
 sidebar_position: 3
 author: Microsoft
-ms.date: 2026-10-15
+ms.date: 2026-10-19
 ms.topic: reference
 keywords:
   - skill
@@ -23,7 +23,7 @@ keywords:
 ## What it does
 
 <!-- BEGIN AUTO-GENERATED: overview -->
-Compare binary rates or average values across affected and unaffected cohorts during root cause analysis.
+Compare binary rates or average values across affected and unaffected cohorts during root cause analysis. Use when root-cause-analysis selects an applicable affected-versus-unaffected cohort comparison.
 <!-- END AUTO-GENERATED: overview -->
 
 ## When to use it

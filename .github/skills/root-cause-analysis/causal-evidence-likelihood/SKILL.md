@@ -1,8 +1,13 @@
 ---
 name: causal-evidence-likelihood
-description: 'Assess how one evidence item changes an RCA hypothesis using an uncalibrated, model-elicited likelihood-ratio band. Use through the root-cause-analysis workflow.'
+description: "Assess how one evidence item changes an RCA hypothesis using an uncalibrated, model-elicited likelihood-ratio band. Use when root-cause-analysis selects an eligible hypothesis-evidence pair."
+license: MIT
 user-invocable: false
 compatibility: "Requires an Agent Skills host and the root-cause-analysis companion workflow."
+metadata:
+  authors: "microsoft/hve-core"
+  spec_version: "1.0"
+  last_updated: "2026-10-19"
 ---
 
 # Causal Evidence Likelihood
@@ -83,9 +88,9 @@ Reason in both directions before selecting a value:
    intent, documentation, temporal proximity, and unexplained correlation.
 5. Test logical compatibility explicitly. If `E` cannot be true when `H` is true under the stated
    mechanism and scope, classify it as contradicting even when statistical observations favor
-  `H`.
+   `H`.
 6. Select the narrowest defensible likelihood-ratio band. Prefer `Neutral` when the connection is
-  unknown or equally expected under `H` and `not H`.
+   unknown or equally expected under `H` and `not H`.
 
 ## Likelihood-Ratio Scale
 

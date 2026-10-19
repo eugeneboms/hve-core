@@ -1,8 +1,13 @@
 ---
 name: statistical-hypothesis-testing
-description: 'Compare binary rates or average values across affected and unaffected cohorts during root cause analysis.'
+description: "Compare binary rates or average values across affected and unaffected cohorts during root cause analysis. Use when root-cause-analysis selects an applicable affected-versus-unaffected cohort comparison."
+license: MIT
 user-invocable: false
 compatibility: "Requires an Agent Skills host and a statistical runtime supporting Barnard's exact test and Welch's independent-samples t-test."
+metadata:
+  authors: "microsoft/hve-core"
+  spec_version: "1.0"
+  last_updated: "2026-10-19"
 ---
 
 # Statistical Hypothesis Testing
