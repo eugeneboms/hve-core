@@ -1207,7 +1207,7 @@ Describe 'Poutine baseline triage and weekly coverage' -Tag 'Unit', 'Poutine' {
         @($exceptions[0]['purl']) | Should -Be @('pkg:githubactions/googleapis/release-please-action')
     }
 
-    It 'Retains unrelated creator signal including EndBug' {
+    It 'Keeps creator acknowledgments package-scoped after replacing EndBug' {
         $exceptions = @($script:PoutineConfig['skip'] | Where-Object {
                 @($_['rule']) -contains 'github_action_from_unverified_creator_used'
             })
@@ -1219,7 +1219,8 @@ Describe 'Poutine baseline triage and weekly coverage' -Tag 'Unit', 'Poutine' {
                 Should -Contain $exception['purl'][0]
         }
         $labelSync = Get-WorkflowText -Name 'label-sync.yml'
-        $labelSync | Should -Match 'EndBug/label-sync@[0-9a-f]{40}'
+        $labelSync | Should -Not -Match 'EndBug/label-sync@'
+        $labelSync | Should -Match 'run: \./scripts/ci/Sync-RepositoryLabels\.ps1'
         $labelSync | Should -Not -Match 'poutine:ignore'
     }
 
