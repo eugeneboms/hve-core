@@ -1,6 +1,6 @@
 import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import {
   FixtureApprovalLedger,
@@ -12,7 +12,6 @@ import {
   EVALUATION_CASE_IDS,
   EXPECTED_MODEL,
   EXPECTED_REASONING_EFFORT,
-  readJson,
   resolveInside,
   sha256,
   stableJson,
@@ -468,11 +467,11 @@ export function redactArtifact<T>(value: T, explicitValues: readonly string[]): 
       text = next;
     }
   }
-  text = text.replace(/[A-Za-z]:\\\\Users\\\\[^\\\\"/]+/gi, () => {
+  text = text.replace(/[A-Za-z]:\\\\Users\\\\[^\\"/]+/gi, () => {
     replacements += 1;
     return "[REDACTED_HOME]";
   });
-  text = text.replace(/\/(?:home|Users)\/[^/\\\\"']+/g, () => {
+  text = text.replace(/\/(?:home|Users)\/[^/\\"']+/g, () => {
     replacements += 1;
     return "[REDACTED_HOME]";
   });

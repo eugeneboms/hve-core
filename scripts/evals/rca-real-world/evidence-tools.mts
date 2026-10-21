@@ -1,7 +1,6 @@
 import { createReadStream } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
-import { join } from "node:path";
 
 import { resolveInside, sha256, stableJson, type Modality } from "./contracts.mts";
 

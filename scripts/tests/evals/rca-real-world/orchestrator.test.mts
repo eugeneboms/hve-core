@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { test } from "node:test";
 
 import {
+  redactArtifact,
   runTrial,
   type ModelClient,
   type SessionCreationConfig,
@@ -79,6 +80,22 @@ function finalResponse(): string {
     "Review source metrics and obtain accountable sign-off.",
   ].join("\n\n");
 }
+
+test("redacts Windows and Unix home paths", () => {
+  const result = redactArtifact(
+    {
+      windowsPath: "C:\\Users\\person\\secret",
+      unixPath: "/home/person/secret",
+    },
+    [],
+  );
+
+  assert.deepEqual(result.value, {
+    windowsPath: "[REDACTED_HOME]\\secret",
+    unixPath: "[REDACTED_HOME]/secret",
+  });
+  assert.equal(result.replacements, 2);
+});
 
 test("uses the exact model profile and independently approved tool path", async () => {
   const root = await runRoot();
