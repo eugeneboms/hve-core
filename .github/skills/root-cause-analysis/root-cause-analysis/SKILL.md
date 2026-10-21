@@ -6,7 +6,7 @@ compatibility: "Requires an Agent Skills host with all three RCA skills installe
 metadata:
   authors: "microsoft/hve-core"
   spec_version: "1.0"
-  last_updated: "2026-10-19"
+  last_updated: "2026-10-20"
 ---
 
 # Root Cause Analysis
@@ -24,10 +24,10 @@ explicitly empty sets. When assessing hypothesis dispositions, invoke the siblin
 affected and unaffected cohorts.
 Invoke the sibling `causal-evidence-likelihood` skill for valid exploratory and confirmatory
 hypothesis-evidence pairs while preserving their different authority over disposition and
-completion. For statistically applicable confirmatory pairs, require significance after the
+completion. For statistically applicable confirmatory pairs, report significance after the
 declared multiple-comparisons correction and assess supporting and contradicting directions
-symmetrically. Other executed evidence remains subject to the investigation's disposition and
-completion criteria.
+symmetrically; significance is not a prerequisite for causal-likelihood assessment. Other executed
+evidence remains subject to the investigation's disposition and completion criteria.
 
 Use the host's actual tools and existing credentials; the skills grant no access. They cannot
 extend a host execution limit, schedule themselves, or guarantee a discoverable root cause.
@@ -178,6 +178,10 @@ that nothing occurred. Record decisions and observable evidence, not private rea
 | Evidence E-nnn   | Source-system retrievable locator; origin (`Primary source` or `Verified claim from historical interpretation`) and originating interpretation locator when applicable; test ID; collection time; original event time and zone; normalized time and clock adjustment; direct observation; separate interpretation; reliability with reason; integrity, transformation, truncation, personal-data, and redaction notes                                                                                                                      |
 | Likelihood L-nnn | Hypothesis ID; evidence ID; evidence class (`Exploratory` or `Confirmatory`) and classification rationale; current-run elicitation marker; five-band assessment and uncalibrated likelihood-ratio range; implied assessment band from a standardized 50% prior; rationale under the hypothesis and its negation; strongest alternative; elicitation host, exposed model identity, and assessment time; reasoning confidence; dependence and calibration limitations; permitted use; next observation that would most change the assessment |
 
+When a source or tool exposes a canonical service, resource, component, or operation identifier,
+preserve that exact identifier in H-nnn records and final diagnostic fields. Put aliases or
+readable labels in parentheses rather than replacing the canonical identifier.
+
 Test execution statuses are `Planned`, `Executed`, `Failed`, or `Blocked`. An executed test can be
 inconclusive; execution success is not hypothesis support. A failed tool call is evidence of a
 collection problem, not evidence that the suspected fault is absent.
@@ -285,6 +289,18 @@ For log and metric queries:
 5. Treat zero rows as negative evidence only after confirming expected coverage, a valid query,
    and that the event would have been emitted and retained. Otherwise record a gap.
 
+Do not attribute a failure to a service from whole-window minimum values, maximum values, averages,
+or ranked anomalies unless the evidence is aligned to the verified failure window and compared
+with a justified baseline or unaffected control. When event timing is unavailable, classify the
+observation as exploratory and request the smallest comparison bounded to a specific time window.
+If that comparison cannot be executed, keep the service attribution unassessed.
+
+For bounded log or trace excerpts, verify the selection rule and incident-window coverage before
+using the rows as causal evidence. The first rows returned, rows selected in source order, or rows
+from before onset do not validate incident behavior. If the excerpt misses the failure window,
+record the gap and request a query bounded to the onset window rather than treating the excerpt as
+representative.
+
 Treat every value derived from logs, tickets, memory, source code, or user input as an untrusted
 literal. Use parameterized queries or the source's documented literal escaping. Validate any
 dynamic identifier against discovered schema before use. Do not issue Kusto management commands,
@@ -350,8 +366,9 @@ After statistical testing, create two pair sets:
 * The exploratory-pair set contains valid hypothesis-evidence pairs whose evidence contributed to
   forming or revising the hypothesis or test design.
 * The confirmatory-pair set contains valid pairs based on evidence that did not contribute to
-  hypothesis or test formation. A statistically applicable pair must have a Holm-adjusted p-value
-  that meets the predefined threshold.
+  hypothesis or test formation. For a statistically applicable pair, record whether its
+  Holm-adjusted p-value meets the predefined threshold. Significance controls statistical support,
+  not inclusion in causal-likelihood assessment.
 
 For each pair, retain the hypothesis ID, evidence ID, evidence class, classification rationale,
 exact hypothesis and mechanism, direct observation, predicted and observed directions, raw and
@@ -539,8 +556,59 @@ On completion or an explicit stop, return the following sections in order.
 
 ### 1. Status and Finding
 
-Report the root cause if Complete; otherwise report the leading explanation clearly labeled
-unverified. State confidence, scope, impact, and the decisive limitation.
+Separate finding authority from the best available working theory. Always return Set A and Set B
+in that order.
+
+#### Set A: Evidence-Supported Finding
+
+Set A retains the completion gate and human-sign-off authority. Report the root cause only when
+the applicable completion status permits it. Otherwise mark the finding `Not established` and
+keep unsupported diagnostic fields `Unassessed`.
+
+```text
+Set A - Evidence-supported finding:
+* Finding status: Complete | Ready for human sign-off | Not established
+* Stop state: <Complete, Provisional, Inconclusive, Blocked, or Paused>
+* Root-cause target: <canonical service, system, process, or resource identifier; Not applicable; or Unassessed>
+* Fault or mechanism: <supported mechanism or Unassessed>
+* Confidence: <High, Medium, Low, or None>
+* Tested hypothesis: <H-nnn or None>
+* Completion gate: <Pass or Not met>
+* Human sign-off: <Recorded or Pending>
+```
+
+Set B cannot satisfy Set A, change a hypothesis disposition, or satisfy the completion gate.
+
+#### Set B: Leading Unverified Hypothesis
+
+Set B reports the strongest current working theory from an existing H-nnn record. It may remain
+useful when Set A is empty, but it must preserve uncertainty, alternatives, and the exact missing
+confirmation. Do not invent a candidate merely to populate Set B; use `No defensible candidate`
+when the available evidence does not distinguish one.
+
+```text
+Set B - Leading unverified hypothesis:
+* Candidate target: <canonical service, system, process, or resource identifier; Not applicable; or No defensible candidate>
+* Candidate mechanism: <mechanism or Unassessed>
+* Evidence direction: <supports, contradicts, mixed, neutral, or Unassessed>
+* Evidence class: <Exploratory, Confirmatory, or Mixed>
+* Working confidence: <Medium or Low>
+* Supporting evidence: <E-nnn IDs or None>
+* Contradicting evidence: <E-nnn IDs or None observed>
+* Strongest alternative: <H-nnn or None identified>
+* Missing confirmation: <exact evidence gap>
+* Next discriminating test: <exact bounded test>
+* Permitted use: Investigation planning only
+```
+
+After Set B, include this warning:
+
+> This is an evidence-informed working hypothesis, not a verified root cause. Use it to prioritize
+> further investigation and low-risk validation. Do not use it by itself for incident closure,
+> irreversible remediation, compliance conclusions, or attribution of responsibility.
+
+Do not attach a numeric probability or describe Set B as statistically likely unless a separate,
+representative calibration establishes that claim.
 
 ### 2. Source Coverage
 
@@ -562,12 +630,16 @@ inaccessible. Preserve observed versus inferred timeline events outside this tab
 Report IDs, mechanisms, predictions and disproof criteria, supporting and contradicting evidence,
 dispositions, confidence, and revision lineage.
 
+A service or mechanism mentioned only in the final narrative does not count as tested. The
+corresponding H-nnn record must name the canonical target, mechanism, predictions, and disproof
+criteria before the decisive evidence is interpreted.
+
 #### Confirmatory Companion Assessments
 
-Before the table, state the declared significance threshold, the number of statistical comparisons
-run, and that only statistically applicable pairs meeting the threshold in their observed
-direction received a causal-likelihood assessment. Include exactly these columns for every
-confirmatory hypothesis-evidence pair:
+Before the table, state the declared significance threshold and the number of statistical
+comparisons run. Assess every confirmatory hypothesis-evidence pair for causal likelihood, and
+report statistical applicability and corrected significance separately. Include exactly these
+columns for every confirmatory hypothesis-evidence pair:
 
 | Hypothesis              | Evidence                  | Groups (n)                     | Direction               | Adjusted p-value or N/A | Causal likelihood (model-elicited) | Reasoning confidence |
 |-------------------------|---------------------------|--------------------------------|-------------------------|------------------------:|------------------------------------|----------------------|
@@ -614,6 +686,11 @@ citations.
 
 Report prioritized cause-linked actions, effectiveness measures, ownership decisions, residual
 risks, and any conditional recommendations.
+
+Map corrective and preventive actions only to Set A or to separately evidenced control gaps. Set B
+may support another bounded test, increased observation, or reversible low-risk containment when
+that action is independently justified. Set B alone cannot authorize incident closure, permanent
+remediation, compliance conclusions, or attribution of responsibility.
 
 ### 7. Authorization and Execution Audit
 
