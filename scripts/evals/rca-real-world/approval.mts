@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Microsoft Corporation. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 import { randomUUID } from "node:crypto";
 
 import { sha256, stableJson } from "./contracts.mts";

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Microsoft Corporation. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -19,7 +22,7 @@ interface Fixture {
   readonly repositoryRoot: string;
   readonly options: Omit<PreparationOptions, "runId">;
   readonly contract: EvaluationContract;
-  readonly content: ReadonlyMap<string, Uint8Array>;
+  readonly content: Map<string, Uint8Array>;
 }
 
 async function createFixture(): Promise<Fixture> {
@@ -121,7 +124,9 @@ async function createFixture(): Promise<Fixture> {
     }
     const remotePath = /\/resolve\/[0-9a-f]{40}\/([^?]+)/.exec(url)?.[1];
     const bytes = remotePath ? content.get(decodeURIComponent(remotePath)) : undefined;
-    return bytes ? new Response(bytes) : new Response("missing", { status: 404 });
+    return bytes
+      ? new Response(new Uint8Array(bytes).buffer)
+      : new Response("missing", { status: 404 });
   };
 
   const parquetReader = async (path: string): Promise<readonly Record<string, unknown>[]> => {
