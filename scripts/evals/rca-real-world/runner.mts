@@ -11,6 +11,7 @@ import {
   EVALUATION_CASE_IDS,
   EXPECTED_MODEL,
   EXPECTED_REASONING_EFFORT,
+  compareStrings,
   createSchedule,
   readJson,
   sha256,
@@ -253,7 +254,7 @@ export async function createInputFingerprint(
       sha256: sha256(await readFile(path)),
     });
   }
-  files.sort((left, right) => left.path.localeCompare(right.path));
+  files.sort((left, right) => compareStrings(left.path, right.path));
   return sha256(stableJson(files));
 }
 

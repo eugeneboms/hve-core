@@ -77,6 +77,18 @@ export interface PreparedCaseManifest {
 }
 
 /**
+ * Compares primitive strings by UTF-16 code units, independently of locale.
+ *
+ * @throws A `TypeError` when either operand is not a primitive string.
+ */
+export function compareStrings(left: unknown, right: unknown): -1 | 0 | 1 {
+  if (typeof left !== "string" || typeof right !== "string") {
+    throw new TypeError("String comparison requires two primitive strings");
+  }
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/**
  * Produces deterministic JSON for hashing and machine-readable artifacts.
  *
  * Object keys are sorted recursively. Dates, byte arrays, and big integers are converted to
@@ -101,7 +113,7 @@ function normalizeJson(value: unknown): unknown {
   }
   if (value !== null && typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => compareStrings(left, right))
       .map(([key, nested]) => [key, normalizeJson(nested)]);
     return Object.fromEntries(entries);
   }

@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  compareStrings,
   createSchedule,
   resolveInside,
   stableJson,
@@ -160,4 +161,40 @@ test("rejects output-root escape", () => {
 
 test("serializes equivalent objects deterministically", () => {
   assert.equal(stableJson({ b: 2, a: { d: 4, c: 3 } }), stableJson({ a: { c: 3, d: 4 }, b: 2 }));
+});
+
+test("compares strings by code units rather than locale", () => {
+  assert.equal(compareStrings("", ""), 0);
+  assert.equal(compareStrings("same", "same"), 0);
+  for (const [left, right] of [
+    ["", "a"],
+    ["A", "a"],
+    ["Z", "a"],
+    ["a", "aa"],
+    ["z", "\u00e4"],
+    ["e\u0301", "\u00e9"],
+    ["\ud83d\ude00", "\ue000"],
+  ]) {
+    assert.equal(compareStrings(left, right), -1);
+    assert.equal(compareStrings(right, left), 1);
+  }
+});
+
+test("rejects non-string operands without coercion", () => {
+  const invalidValues: readonly unknown[] = [
+    undefined, null, 0, 1n, false, {}, [], Object("boxed"), Symbol("string"), () => "value",
+    { toString: () => { throw new Error("Must not coerce"); } },
+  ];
+  for (const value of invalidValues) {
+    assert.throws(() => compareStrings(value, "a"), TypeError);
+    assert.throws(() => compareStrings("a", value), TypeError);
+    assert.throws(() => compareStrings(value, value), TypeError);
+  }
+});
+
+test("serializes nested object keys in code-unit order", () => {
+  assert.equal(
+    stableJson({ "\u00e4": 4, z: 3, a: { z: 2, Z: 1 }, Z: 0 }),
+    '{\n  "Z": 0,\n  "a": {\n    "Z": 1,\n    "z": 2\n  },\n  "z": 3,\n  "\u00e4": 4\n}\n',
+  );
 });

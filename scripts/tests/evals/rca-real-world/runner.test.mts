@@ -2,13 +2,44 @@
 // SPDX-License-Identifier: MIT
 
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 
 import type { CliInvoker } from "../../../evals/rca-real-world/cli-orchestrator.mts";
-import { runRound } from "../../../evals/rca-real-world/runner.mts";
+import { sha256, stableJson } from "../../../evals/rca-real-world/contracts.mts";
+import { createInputFingerprint, runRound } from "../../../evals/rca-real-world/runner.mts";
+
+test("fingerprints input paths in code-unit order", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "rca-fingerprint-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const runRoot = join(root, "run");
+  const paths = [
+    ".github/skills/root-cause-analysis/skill.txt",
+    "evals/rca-real-world/Z.txt",
+    "evals/rca-real-world/a.txt",
+    "package-lock.json",
+    "scripts/evals/rca-real-world/source.mts",
+  ];
+  for (const path of paths) {
+    const absolutePath = join(root, ...path.split("/"));
+    await mkdir(dirname(absolutePath), { recursive: true });
+    await writeFile(absolutePath, "fixture", "utf8");
+  }
+  const manifestPath = join(runRoot, "inputs", "scorer-only", "preparation-manifest.json");
+  await mkdir(dirname(manifestPath), { recursive: true });
+  await writeFile(manifestPath, "manifest", "utf8");
+  const expectedFiles = [
+    ...paths.slice(0, 4).map((path) => ({ path, sha256: sha256("fixture") })),
+    { path: "preparation-manifest.json", sha256: sha256("manifest") },
+    { path: paths[4], sha256: sha256("fixture") },
+  ];
+  assert.equal(
+    await createInputFingerprint(root, runRoot),
+    sha256(stableJson(expectedFiles)),
+  );
+});
 
 const NOW = new Date("2026-10-19T20:00:00.000Z");
 const serviceByCase: Readonly<Record<string, string>> = {
