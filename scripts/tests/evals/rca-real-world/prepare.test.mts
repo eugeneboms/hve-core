@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -10,11 +10,13 @@ import { test } from "node:test";
 import {
   gitBlobObjectId,
   sha256,
+  type PreparedCaseManifest,
   type EvaluationContract,
 } from "../../../evals/rca-real-world/contracts.mts";
 import {
   assertBlindness,
   prepareCases,
+  verifyPreparedRun,
   type PreparationOptions,
 } from "../../../evals/rca-real-world/prepare.mts";
 
@@ -182,6 +184,63 @@ test("prepares deterministic separated workspaces while preserving telemetry ser
     await readFile(join(first.scorerOnlyRoot, "truth", "case-01.json"), "utf8"),
     /source-case-one|case-01-service/,
   );
+});
+
+test("persists and verifies deterministic metric identities without renaming telemetry columns", async (context) => {
+  const fixture = await createFixture();
+  context.after(() => rm(fixture.repositoryRoot, { recursive: true, force: true }));
+  const originalReader = fixture.options.parquetReader;
+  assert.ok(originalReader);
+  const options = {
+    ...fixture.options,
+    parquetReader: async (path: string) => path.endsWith("metrics.parquet")
+      ? [{ time: 1, user_db_cpu: 10, "user_latency-90": 0.2 }]
+      : originalReader(path),
+  };
+  const first = await prepareCases({ ...options, runId: "mapping-one" });
+  const second = await prepareCases({ ...options, runId: "mapping-two" });
+  const mapPath = join(first.modelVisibleRoot, "case-01", "metric-columns.json");
+  const mapping = await readFile(mapPath, "utf8");
+  assert.deepEqual(JSON.parse(mapping), {
+    user_db_cpu: { service: "user_db", metric: "cpu" },
+    "user_latency-90": { service: "user", metric: "latency-90" },
+  });
+  assert.equal(mapping, await readFile(
+    join(second.modelVisibleRoot, "case-01", "metric-columns.json"), "utf8",
+  ));
+  assert.deepEqual(JSON.parse((await readFile(
+    join(first.modelVisibleRoot, "case-01", "metrics.jsonl"), "utf8",
+  )).trim()), { time: 1, user_db_cpu: 10, "user_latency-90": 0.2 });
+  const manifest: {
+    sourceRevision: string;
+    transformationVersion: string;
+    cases: readonly PreparedCaseManifest[];
+  } = JSON.parse(await readFile(first.manifestPath, "utf8"));
+  assert.equal(manifest.transformationVersion, "2.0.0");
+  assert.equal(manifest.cases[0]?.metricColumnsSha256, sha256(mapping));
+  await writeFile(first.manifestPath, JSON.stringify({
+    ...manifest, sourceRevision: "afeacb11bcc94dadfd1c8f483ee4377b2b8b614e",
+  }), "utf8");
+  await verifyPreparedRun(fixture.repositoryRoot, "mapping-one");
+  await writeFile(mapPath, mapping.replace('"user_db"', '"other"'), "utf8");
+  await assert.rejects(
+    verifyPreparedRun(fixture.repositoryRoot, "mapping-one"),
+    /Metric column mapping integrity mismatch/,
+  );
+});
+
+test("rejects unsupported wide metric schemas during preparation", async (context) => {
+  const fixture = await createFixture();
+  context.after(() => rm(fixture.repositoryRoot, { recursive: true, force: true }));
+  const originalReader = fixture.options.parquetReader;
+  assert.ok(originalReader);
+  await assert.rejects(prepareCases({
+    ...fixture.options,
+    runId: "unknown-metric",
+    parquetReader: async (path) => path.endsWith("metrics.parquet")
+      ? [{ time: 1, user_cpu_percent: 10 }]
+      : originalReader(path),
+  }), /Unsupported RCAEval metric column/);
 });
 
 test("fails closed on source hash drift and removes partial output", async () => {

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -11,7 +11,10 @@ import {
   FixtureApprovalLedger,
   type ApprovalRequestItem,
 } from "../../../evals/rca-real-world/approval.mts";
-import { createEvidenceTools } from "../../../evals/rca-real-world/evidence-tools.mts";
+import {
+  createEvidenceTools,
+  type EvidenceToolResult,
+} from "../../../evals/rca-real-world/evidence-tools.mts";
 
 const NOW = "2026-10-19T20:00:00.000Z";
 
@@ -45,6 +48,7 @@ async function caseRoot(): Promise<string> {
     '{"sources":[{"modality":"metrics","rowCount":2}]}',
     "utf8",
   );
+  await writeFile(join(root, "metric-columns.json"), "{}\n", "utf8");
   await writeFile(
     join(root, "metrics.jsonl"),
     [
@@ -159,6 +163,10 @@ test("returns metric aggregates and explicit source metadata", async () => {
 
 test("aggregates the RCAEval wide metric schema by field name and unit", async () => {
   const root = await caseRoot();
+  await writeFile(join(root, "metric-columns.json"), JSON.stringify({
+    adservice_cpu: { service: "adservice", metric: "cpu" },
+    checkoutservice_cpu: { service: "checkoutservice", metric: "cpu" },
+  }), "utf8");
   await writeFile(
     join(root, "metrics.jsonl"),
     [
@@ -187,8 +195,126 @@ test("aggregates the RCAEval wide metric schema by field name and unit", async (
   ]);
 });
 
+/** Executes one exactly approved metric fixture query without model access. */
+async function metricQuery(
+  root: string,
+  parameters: Readonly<Record<string, unknown>>,
+  comparison = false,
+): Promise<EvidenceToolResult & {
+  data: {
+    aggregates?: readonly { field: string; count: number; average: number }[];
+    comparisons?: readonly { field: string }[];
+    baselineRowCount?: number;
+    postOnsetRowCount?: number;
+  };
+}> {
+  const name = comparison ? "compare_metrics" : "aggregate_metrics";
+  const ledger = new FixtureApprovalLedger(
+    [approval(name, comparison ? "compare" : "aggregate", parameters)],
+    () => new Date(NOW),
+  );
+  const harness = createEvidenceTools({ caseRoot: root, ledger, clock: () => new Date(NOW) });
+  const tool = harness.tools.find((candidate) => candidate.name === name);
+  assert.ok(tool);
+  return JSON.parse(await tool.handler({ ...parameters }));
+}
+
+test("matches mapped identities exactly without inferring them from column names", async (context) => {
+  const root = await caseRoot();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, "metric-columns.json"), JSON.stringify({
+    cpu_user_db: { service: "user", metric: "cpu" },
+    a: { service: "user-db", metric: "cpu" },
+    b: { service: "user", metric: "cpu_time" },
+  }), "utf8");
+  await writeFile(join(root, "metrics.jsonl"), JSON.stringify({
+    time: 1, cpu_user_db: 10, a: 900, b: 800,
+  }) + "\n", "utf8");
+  const result = await metricQuery(root, {
+    startTime: 0, endTime: 2, service: " USER ", metric: " CPU ",
+  });
+  assert.equal(result.matchedRowCount, 1);
+  assert.deepEqual(result.data.aggregates?.map(({ field, average }) => ({ field, average })), [
+    { field: "cpu_user_db", average: 10 },
+  ]);
+  const timeMetric = await metricQuery(root, {
+    startTime: 0, endTime: 2, service: "user", metric: "cpu_time",
+  });
+  assert.equal(timeMetric.data.aggregates?.[0]?.field, "b");
+  const serviceOnly = await metricQuery(root, { startTime: 0, endTime: 2, service: "user-db" });
+  assert.equal(serviceOnly.data.aggregates?.[0]?.field, "a");
+});
+
+test("reports no matching rows when no mapped column matches, including comparisons", async (context) => {
+  const root = await caseRoot();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, "metric-columns.json"), JSON.stringify({
+    user_cpu: { service: "user", metric: "cpu" },
+  }), "utf8");
+  await writeFile(join(root, "metrics.jsonl"),
+    '{"time":1,"user_cpu":10}\n{"time":3,"user_cpu":20}\n', "utf8");
+  const aggregate = await metricQuery(root, {
+    startTime: 0, endTime: 4, metric: "cp",
+  });
+  assert.equal(aggregate.rowCount, 2);
+  assert.equal(aggregate.matchedRowCount, 0);
+  assert.equal(aggregate.empty, true);
+  assert.deepEqual(aggregate.data.aggregates, []);
+  const comparison = await metricQuery(root, {
+    baselineStartTime: 0, baselineEndTime: 2,
+    postStartTime: 2, postEndTime: 4, service: "use",
+  }, true);
+  assert.equal(comparison.matchedRowCount, 0);
+  assert.equal(comparison.empty, true);
+  assert.equal(comparison.data.baselineRowCount, 0);
+  assert.equal(comparison.data.postOnsetRowCount, 0);
+  assert.deepEqual(comparison.data.comparisons, []);
+});
+
+test("filters mixed narrow and wide rows independently and excludes missing requested identities", async (context) => {
+  const root = await caseRoot();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, "metric-columns.json"), JSON.stringify({
+    user_cpu: { service: "user", metric: "cpu" },
+  }), "utf8");
+  await writeFile(join(root, "metrics.jsonl"), [
+    { time: 1, user_cpu: 10 },
+    { time: 2, service: "user", metric: "cpu", value: 20 },
+    { time: 3, service: "user-db", metric: "cpu", value: 900 },
+    { time: 4, metric: "cpu", value: 800 },
+    { time: 5, service: "user", value: 700 },
+    { time: 6, service: "user", metric: "cpu_time", value: 600 },
+  ].map((row) => JSON.stringify(row)).join("\n") + "\n", "utf8");
+  const result = await metricQuery(root, {
+    startTime: 0, endTime: 7, service: "user", metric: "cpu",
+  });
+  assert.equal(result.matchedRowCount, 2);
+  assert.deepEqual(result.data.aggregates?.map(({ field, average }) => ({ field, average })), [
+    { field: "user_cpu", average: 10 },
+    { field: "value", average: 20 },
+  ]);
+});
+
+test("fails closed on absent, malformed, or incomplete metric mappings", async (context) => {
+  const root = await caseRoot();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const parameters = { startTime: 0, endTime: 2 };
+  await rm(join(root, "metric-columns.json"));
+  await assert.rejects(metricQuery(root, parameters), /ENOENT/);
+  await writeFile(join(root, "metric-columns.json"), '{"user_cpu":{}}', "utf8");
+  await assert.rejects(metricQuery(root, parameters), /Invalid metric column identity/);
+  await writeFile(join(root, "metric-columns.json"), "{}", "utf8");
+  await writeFile(join(root, "metrics.jsonl"), '{"time":1,"user_cpu":10}\n', "utf8");
+  await assert.rejects(metricQuery(root, parameters), /Missing metric column identity/);
+  await assert.rejects(metricQuery(root, { ...parameters, metric: "" }), /non-empty string/);
+});
+
 test("ranks compact baseline-to-post metric changes", async () => {
   const root = await caseRoot();
+  await writeFile(join(root, "metric-columns.json"), JSON.stringify({
+    adservice_cpu: { service: "adservice", metric: "cpu" },
+    cartservice_cpu: { service: "cartservice", metric: "cpu" },
+  }), "utf8");
   await writeFile(
     join(root, "metrics.jsonl"),
     [

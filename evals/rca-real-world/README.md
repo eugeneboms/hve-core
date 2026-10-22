@@ -2,7 +2,7 @@
 title: RCAEval real-world RCA evaluation
 description: Run five blinded RCAEval cases through the root-cause-analysis skill with bounded evidence tools
 author: HVE Core Team
-ms.date: 2026-10-20
+ms.date: 2026-10-22
 ms.topic: reference
 keywords:
   - root cause analysis
@@ -27,6 +27,25 @@ license.
 No RCAEval telemetry or transformed telemetry is committed to this repository. The committed
 case contract records source paths only for preparation and provenance. Generated data remains
 under the gitignored evaluation evidence root.
+
+## Metric identities
+
+Preparation preserves source column names and writes a per-case `metric-columns.json` mapping
+each wide numeric column to its service and metric identities. The pinned RCAEval schema uses
+terminal metric suffixes: `cpu`, `mem`, `latency`, `latency-50`, `latency-90`, `load`, `error`,
+`diskio`, `socket`, and `workload`. Preparation extracts only these declared suffixes, preserving
+underscores inside service names, and rejects unknown numeric columns instead of guessing a
+boundary. The mapping uses telemetry schema only, never held-out root-cause labels.
+
+`read_incident_scope` exposes the mapping. Both metric tools compare requested identities using
+trimmed, case-insensitive equality, not substring matching. For example, `latency` does not match
+`latency-90`, and `user` does not match `user-db`. Narrow rows use their explicit identity fields;
+rows missing a requested identity are excluded. Mixed narrow and wide rows are handled per row.
+Matched-row counts include only rows contributing selected finite numeric values.
+
+The preparation manifest hashes each mapping, and continuation fingerprints include the mapping
+files. Transformation version `2.0.0` requires freshly prepared inputs; old runs must not be resumed
+with the new filtering semantics. Unknown, missing, or malformed mappings fail explicitly.
 
 ## Blindness boundary
 

@@ -25,6 +25,7 @@ import {
   validateContract,
   writeJson,
 } from "./contracts.mts";
+import { buildMetricColumnMap, validateMetricColumnMap } from "./metric-schema.mts";
 
 interface HuggingFaceTreeItem {
   readonly type: "file";
@@ -195,15 +196,25 @@ export async function verifyPreparedRun(
   );
   const manifest = await readJson<{
     sourceRevision: string;
+    transformationVersion: string;
     cases: readonly PreparedCaseManifest[];
   }>(join(runRoot, "inputs", "scorer-only", "preparation-manifest.json"));
   if (
     manifest.sourceRevision !== "afeacb11bcc94dadfd1c8f483ee4377b2b8b614e" ||
+    manifest.transformationVersion !== TRANSFORMATION_VERSION ||
     manifest.cases.length !== EVALUATION_CASE_IDS.length
   ) {
     throw new Error("Prepared run does not match the pinned evaluation contract");
   }
   for (const preparedCase of manifest.cases) {
+    const mapping = await readFile(resolveInside(
+      join(runRoot, "inputs", "model-visible", preparedCase.neutralId),
+      "metric-columns.json",
+    ), "utf8");
+    validateMetricColumnMap(JSON.parse(mapping));
+    if (sha256(mapping) !== preparedCase.metricColumnsSha256) {
+      throw new Error(`Metric column mapping integrity mismatch: ${preparedCase.neutralId}`);
+    }
     for (const modality of preparedCase.modalities) {
       const storePath = resolveInside(
         join(runRoot, "inputs", "model-visible", preparedCase.neutralId),
@@ -284,11 +295,17 @@ async function prepareCase(options: {
   }
 
   const modalities = [];
+  let metricColumnsSha256: string | undefined;
   for (const modality of caseContract.modalities) {
     const sourcePath = requireDownloaded(downloaded, `${modality}.parquet`);
     const rows = await options.parquetReader(sourcePath);
     if (rows.length === 0) {
       throw new Error(`Empty ${modality} evidence for ${caseContract.neutralId}`);
+    }
+    if (modality === "metrics") {
+      const mapping = stableJson(buildMetricColumnMap(rows));
+      await writeFile(join(visibleCaseRoot, "metric-columns.json"), mapping, "utf8");
+      metricColumnsSha256 = sha256(mapping);
     }
     const storeName = `${modality}.jsonl`;
     const storePath = resolveInside(visibleCaseRoot, storeName);
@@ -310,7 +327,12 @@ async function prepareCase(options: {
     ...truth,
   });
 
-  const prepared = { neutralId: caseContract.neutralId, injectionTime, modalities };
+  if (metricColumnsSha256 === undefined) {
+    throw new Error(`Missing metric column mapping: ${caseContract.neutralId}`);
+  }
+  const prepared = {
+    neutralId: caseContract.neutralId, injectionTime, modalities, metricColumnsSha256,
+  };
   await writeJson(join(visibleCaseRoot, "incident.json"), {
     schemaVersion: "1.0.0",
     caseId: caseContract.neutralId,
@@ -529,7 +551,7 @@ export async function assertBlindness(
   ];
   for (const item of cases) {
     const caseRoot = resolveInside(modelVisibleRoot, item.neutralId);
-    for (const name of ["incident.json", "source-coverage.json"]) {
+    for (const name of ["incident.json", "source-coverage.json", "metric-columns.json"]) {
       const path = resolveInside(caseRoot, name);
       const text = (await readFile(path, "utf8")).toLowerCase();
       const relativePath = relative(modelVisibleRoot, path).toLowerCase();

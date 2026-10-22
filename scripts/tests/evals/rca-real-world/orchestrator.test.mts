@@ -20,6 +20,7 @@ async function runRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "rca-orchestrator-"));
   const caseRoot = join(root, "inputs", "model-visible", "case-01");
   await mkdir(caseRoot, { recursive: true });
+  await writeFile(join(caseRoot, "metric-columns.json"), "{}\n", "utf8");
   await writeFile(
     join(caseRoot, "incident.json"),
     '{"caseId":"case-01","incidentOnset":"1700000000"}',

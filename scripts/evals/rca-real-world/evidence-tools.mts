@@ -6,6 +6,13 @@ import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 
 import { resolveInside, sha256, stableJson, type Modality } from "./contracts.mts";
+import {
+  isNarrowMetricRow,
+  METRIC_TIME_FIELDS,
+  validateMetricColumnMap,
+  type MetricColumnMap,
+  type MetricIdentity,
+} from "./metric-schema.mts";
 
 export interface EvidenceToolTrace {
   readonly sequence: number;
@@ -149,7 +156,10 @@ export function createEvidenceTools(options: {
               2,
               2,
               false,
-              { incident, coverage, queryGuidance },
+              {
+                incident, coverage, queryGuidance,
+                metricColumns: await readMetricColumns(options.caseRoot),
+              },
               rowCount > 0,
             );
           }),
@@ -171,12 +181,15 @@ export function createEvidenceTools(options: {
           execute("aggregate_metrics", "aggregate", parameters, async () => {
             requireAllowedKeys(parameters, ["startTime", "endTime", "service", "metric"]);
             const window = requireTimeWindow(parameters);
+            const filters = metricFilters(parameters);
+            const columns = await readMetricColumns(options.caseRoot);
             const rows = await selectRows(
               resolveInside(options.caseRoot, "metrics.jsonl"),
-              parameters,
+              window,
               Number.MAX_SAFE_INTEGER,
+              (row) => metricValues(row, columns, filters).length > 0,
             );
-            const aggregates = aggregateNumeric(rows.rows, parameters);
+            const aggregates = aggregateNumeric(rows.rows, columns, filters);
             return result(
               "metrics",
               rows.scanned,
@@ -190,7 +203,7 @@ export function createEvidenceTools(options: {
       {
         name: "compare_metrics",
         description:
-          "Compare bounded baseline and post-onset metric windows, ranking field changes with units and row counts. Optional service and metric filters match wide metric field names.",
+          "Compare bounded baseline and post-onset metric windows, ranking field changes with units and row counts. Optional service and metric filters use exact, case-insensitive identities from row fields or the prepared column mapping.",
         parameters: objectSchema(
           {
             baselineStartTime: scalarSchema(),
@@ -227,26 +240,24 @@ export function createEvidenceTools(options: {
               startTime: parameters.postStartTime,
               endTime: parameters.postEndTime,
             });
-            const sharedFilters = {
-              ...(parameters.service === undefined ? {} : { service: parameters.service }),
-              ...(parameters.metric === undefined ? {} : { metric: parameters.metric }),
-            };
+            const filters = metricFilters(parameters);
+            const columns = await readMetricColumns(options.caseRoot);
+            const matchesMetric = (row: Record<string, unknown>) =>
+              metricValues(row, columns, filters).length > 0;
             const path = resolveInside(options.caseRoot, "metrics.jsonl");
             const baseline = await selectRows(path, {
-              ...sharedFilters,
               startTime: baselineWindow.startTime,
               endTime: baselineWindow.endTime,
-            }, Number.MAX_SAFE_INTEGER);
+            }, Number.MAX_SAFE_INTEGER, matchesMetric);
             const postOnset = await selectRows(path, {
-              ...sharedFilters,
               startTime: postOnsetWindow.startTime,
               endTime: postOnsetWindow.endTime,
-            }, Number.MAX_SAFE_INTEGER);
+            }, Number.MAX_SAFE_INTEGER, matchesMetric);
             const limit =
               parameters.limit === undefined ? 20 : requireNumber(parameters.limit, "limit");
             const comparisons = compareMetricAggregates(
-              aggregateNumeric(baseline.rows, sharedFilters),
-              aggregateNumeric(postOnset.rows, sharedFilters),
+              aggregateNumeric(baseline.rows, columns, filters),
+              aggregateNumeric(postOnset.rows, columns, filters),
               limit,
             );
             return result(
@@ -450,32 +461,72 @@ function matchesStatusAndDuration(
   return true;
 }
 
+async function readMetricColumns(caseRoot: string): Promise<MetricColumnMap> {
+  const text = await readFile(resolveInside(caseRoot, "metric-columns.json"), "utf8");
+  return validateMetricColumnMap(JSON.parse(text));
+}
+
+function metricFilters(
+  parameters: Readonly<Record<string, unknown>>,
+): Partial<MetricIdentity> {
+  return {
+    service: parameters.service === undefined
+      ? undefined : requireString(parameters.service, "service").toLowerCase(),
+    metric: parameters.metric === undefined
+      ? undefined : requireString(parameters.metric, "metric").toLowerCase(),
+  };
+}
+
+function metricValues(
+  row: Readonly<Record<string, unknown>>,
+  columns: MetricColumnMap,
+  filters: Partial<MetricIdentity>,
+): readonly (readonly [string, number])[] {
+  const narrow = isNarrowMetricRow(row);
+  const rowIdentity = {
+    service: findString(row, ["service", "service_name", "serviceName", "container_name"]),
+    metric: findString(row, ["metric", "metric_name", "name"]),
+  };
+  const values: [string, number][] = [];
+  for (const [field, value] of Object.entries(row)) {
+    if (
+      METRIC_TIME_FIELDS.some((key) => key === field) ||
+      [
+        "service", "service_name", "serviceName", "container_name", "metric", "metric_name", "name",
+      ].includes(field) ||
+      typeof value !== "number" ||
+      !Number.isFinite(value)
+    ) {
+      continue;
+    }
+    const identity = narrow
+      ? rowIdentity
+      : Object.hasOwn(columns, field) ? columns[field] : undefined;
+    if (identity === undefined) {
+      throw new Error(`Missing metric column identity: ${field}`);
+    }
+    if (
+      (filters.service !== undefined && identity.service.trim().toLowerCase() !== filters.service) ||
+      (filters.metric !== undefined && identity.metric.trim().toLowerCase() !== filters.metric)
+    ) {
+      continue;
+    }
+    values.push([field, value]);
+  }
+  return values;
+}
+
 function aggregateNumeric(
   rows: readonly Readonly<Record<string, unknown>>[],
-  parameters: Readonly<Record<string, unknown>>,
-): unknown {
+  columns: MetricColumnMap,
+  filters: Partial<MetricIdentity>,
+): readonly MetricAggregate[] {
   const values = new Map<string, number[]>();
-  const service =
-    typeof parameters.service === "string" ? parameters.service.toLowerCase() : undefined;
-  const metric = typeof parameters.metric === "string" ? parameters.metric.toLowerCase() : undefined;
-  const narrowRows = rows.some((row) => findString(row, ["metric", "metric_name", "name"]) !== "");
   for (const row of rows) {
-    for (const [key, value] of Object.entries(row)) {
-      const normalizedKey = key.toLowerCase();
-      const selected =
-        narrowRows ||
-        ((!service || normalizedKey.includes(service)) && (!metric || normalizedKey.includes(metric)));
-      if (
-        selected &&
-        typeof value === "number" &&
-        Number.isFinite(value) &&
-        !/time|timestamp/i.test(key)
-      ) {
-        const current = values.get(key) ?? [];
-        current.push(value);
-        values.set(key, current);
-      }
-
+    for (const [field, value] of metricValues(row, columns, filters)) {
+      const current = values.get(field) ?? [];
+      current.push(value);
+      values.set(field, current);
     }
   }
   return [...values.entries()].map(([field, fieldValues]) => ({
@@ -651,14 +702,7 @@ function findNumber(
 }
 
 function findTimestamp(row: Readonly<Record<string, unknown>>): number {
-  for (const key of [
-    "timestamp",
-    "startTimeMillis",
-    "start_time",
-    "startTime",
-    "time",
-    "ts",
-  ]) {
+  for (const key of METRIC_TIME_FIELDS) {
     if (row[key] !== undefined) {
       return comparable(row[key]);
     }

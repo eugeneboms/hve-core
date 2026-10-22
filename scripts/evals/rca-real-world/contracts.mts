@@ -7,7 +7,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 
 export const CASE_SCHEMA_VERSION = "1.0.0";
 export const RESULT_SCHEMA_VERSION = "1.0.0";
-export const TRANSFORMATION_VERSION = "1.0.0";
+export const TRANSFORMATION_VERSION = "2.0.0";
 export const EXPECTED_MODEL = "gpt-5.6-sol";
 export const EXPECTED_REASONING_EFFORT = "medium";
 export const EXPECTED_CONTEXT_TIER = "default";
@@ -74,6 +74,7 @@ export interface PreparedCaseManifest {
   readonly neutralId: string;
   readonly injectionTime: string;
   readonly modalities: readonly PreparedModality[];
+  readonly metricColumnsSha256: string;
 }
 
 /**

@@ -11,6 +11,8 @@ import {
   EVALUATION_CASE_IDS,
   EXPECTED_MODEL,
   EXPECTED_REASONING_EFFORT,
+  TRANSFORMATION_VERSION,
+  type PreparedCaseManifest,
   compareStrings,
   createSchedule,
   readJson,
@@ -195,12 +197,23 @@ async function assertPrepared(runRoot: string): Promise<{
 }> {
   const manifest = await readJson<{
     sourceRevision?: string;
-    cases?: readonly unknown[];
+    transformationVersion?: string;
+    cases?: readonly PreparedCaseManifest[];
     parquetReader?: string;
   }>(join(runRoot, "inputs", "scorer-only", "preparation-manifest.json"));
-  if (  manifest.sourceRevision !== SOURCE_REVISION ||
-  manifest.cases?.length !== EVALUATION_CASE_IDS.length) {
+  if (
+    manifest.sourceRevision !== SOURCE_REVISION ||
+    manifest.transformationVersion !== TRANSFORMATION_VERSION ||
+    manifest.cases?.length !== EVALUATION_CASE_IDS.length
+  ) {
     throw new Error("Prepared input manifest is missing or does not match the pinned source");
+  }
+  for (const caseId of EVALUATION_CASE_IDS) {
+    const preparedCase = manifest.cases.find((item) => item.neutralId === caseId);
+    const mapping = await readFile(join(runRoot, "inputs", "model-visible", caseId, "metric-columns.json"));
+    if (!preparedCase || sha256(mapping) !== preparedCase.metricColumnsSha256) {
+      throw new Error(`Metric column mapping integrity mismatch: ${caseId}`);
+    }
   }
   return { parquetReader: manifest.parquetReader };
 }
@@ -252,6 +265,13 @@ export async function createInputFingerprint(
     files.push({
       path: basename(path),
       sha256: sha256(await readFile(path)),
+    });
+  }
+  for (const caseId of EVALUATION_CASE_IDS) {
+    const path = `inputs/model-visible/${caseId}/metric-columns.json`;
+    files.push({
+      path,
+      sha256: sha256(await readFile(join(runRoot, ...path.split("/")))),
     });
   }
   files.sort((left, right) => compareStrings(left.path, right.path));

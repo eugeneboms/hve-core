@@ -13,6 +13,9 @@ import { writeJson } from "../../../evals/rca-real-world/contracts.mts";
 
 test("serves only bounded MCP tools and blocks unapproved calls", async () => {
   const root = await mkdtemp(join(tmpdir(), "rca-mcp-"));
+  await writeJson(join(root, "metric-columns.json"), {
+    service_cpu: { service: "service", metric: "cpu" },
+  });
   const ledgerPath = join(root, "ledger.json");
   const tracePath = join(root, "trace.json");
   await writeFile(join(root, "incident.json"), '{"caseId":"case-01"}', "utf8");

@@ -8,7 +8,12 @@ import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 
 import type { CliInvoker } from "../../../evals/rca-real-world/cli-orchestrator.mts";
-import { sha256, stableJson } from "../../../evals/rca-real-world/contracts.mts";
+import {
+  EVALUATION_CASE_IDS,
+  TRANSFORMATION_VERSION,
+  sha256,
+  stableJson,
+} from "../../../evals/rca-real-world/contracts.mts";
 import { createInputFingerprint, runRound } from "../../../evals/rca-real-world/runner.mts";
 
 test("fingerprints input paths in code-unit order", async (context) => {
@@ -30,12 +35,27 @@ test("fingerprints input paths in code-unit order", async (context) => {
   const manifestPath = join(runRoot, "inputs", "scorer-only", "preparation-manifest.json");
   await mkdir(dirname(manifestPath), { recursive: true });
   await writeFile(manifestPath, "manifest", "utf8");
+  const mappingPaths = EVALUATION_CASE_IDS.map(
+    (caseId) => `inputs/model-visible/${caseId}/metric-columns.json`,
+  );
+  for (const path of mappingPaths) {
+    const absolutePath = join(runRoot, ...path.split("/"));
+    await mkdir(dirname(absolutePath), { recursive: true });
+    await writeFile(absolutePath, "{}\n", "utf8");
+  }
   const expectedFiles = [
-    ...paths.slice(0, 4).map((path) => ({ path, sha256: sha256("fixture") })),
+    ...paths.slice(0, 3).map((path) => ({ path, sha256: sha256("fixture") })),
+    ...mappingPaths.map((path) => ({ path, sha256: sha256("{}\n") })),
+    { path: "package-lock.json", sha256: sha256("fixture") },
     { path: "preparation-manifest.json", sha256: sha256("manifest") },
     { path: paths[4], sha256: sha256("fixture") },
   ];
   assert.equal(
+    await createInputFingerprint(root, runRoot),
+    sha256(stableJson(expectedFiles)),
+  );
+  await writeFile(join(runRoot, ...mappingPaths[0]!.split("/")), '{"changed":true}\n', "utf8");
+  assert.notEqual(
     await createInputFingerprint(root, runRoot),
     sha256(stableJson(expectedFiles)),
   );
@@ -65,13 +85,17 @@ async function preparedRun(): Promise<string> {
     join(scorerRoot, "preparation-manifest.json"),
     JSON.stringify({
       sourceRevision: "afeacb11bcc94dadfd1c8f483ee4377b2b8b614e",
-      cases: ["case-01", "case-02", "case-03", "case-04", "case-05"],
+      transformationVersion: TRANSFORMATION_VERSION,
+      cases: EVALUATION_CASE_IDS.map((neutralId) => ({
+        neutralId, metricColumnsSha256: sha256("{}\n"),
+      })),
     }),
     "utf8",
   );
   for (const caseId of Object.keys(serviceByCase)) {
     const caseRoot = join(root, "inputs", "model-visible", caseId);
     await mkdir(caseRoot, { recursive: true });
+    await writeFile(join(caseRoot, "metric-columns.json"), "{}\n", "utf8");
     await writeFile(
       join(caseRoot, "incident.json"),
       JSON.stringify({ caseId, incidentOnset: "1700000000" }),
@@ -122,6 +146,20 @@ async function preparedRun(): Promise<string> {
   }
   return root;
 }
+
+test("rejects changed metric identities before invoking the model", async (context) => {
+  const root = await preparedRun();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, "inputs", "model-visible", "case-01", "metric-columns.json"),
+    '{"changed":true}\n', "utf8");
+  await assert.rejects(runRound({
+    repositoryRoot: resolve("."),
+    runRoot: root,
+    runId: "mapping-drift",
+    round: 1,
+    cliInvoker: async () => { throw new Error("Model must not run"); },
+  }), /Metric column mapping integrity mismatch/);
+});
 
 function fakeCliInvoker(): CliInvoker {
   return async (args) => {
