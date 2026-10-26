@@ -145,6 +145,14 @@ The committed `PR-3136-EVIDENCE.md` report contains only sanitized outcomes, imm
 artifact hashes, commands, limitations, and human-review status. It excludes raw telemetry,
 credentials, host paths, personal data, and unredacted tool payloads.
 
+Both trial runners and the retrospective sanitizer use the shared
+[`redaction.mts`](../../scripts/evals/rca-real-world/redaction.mts) helper for session artifacts.
+It collects the OS home directory, `HOME`, and `USERPROFILE`; the runners also supply the repository
+root and exact temporary workspace. Redaction handles slash variants and JSON-escaped paths,
+replaces longer paths before their parents, and retains home-pattern and credential fallbacks.
+The sanitizer cannot infer a past temporary workspace or a different host's custom home directory;
+those historical artifacts still need review before sharing.
+
 ## Interpretation limits
 
 * Five selected cases and their model sessions do not establish a general RCA accuracy rate.

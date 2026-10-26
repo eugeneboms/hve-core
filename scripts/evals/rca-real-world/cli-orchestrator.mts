@@ -26,12 +26,12 @@ import {
 import { createEvidenceTools } from "./evidence-tools.mts";
 import {
   buildInitialPrompt,
-  redactArtifact,
   stageSkills,
   validateApprovalTargets,
   type RunTrialOptions,
   type TrialArtifact,
 } from "./orchestrator.mts";
+import { redactArtifact } from "./redaction.mts";
 
 export interface CliInvocationResult {
   readonly exitCode: number;
@@ -325,12 +325,12 @@ export async function runCliTrial(
   };
   const redacted = redactArtifact(rawArtifact, [
     options.repositoryRoot,
-    process.env.USERPROFILE ?? "",
+    workspace,
   ]);
   const artifact: TrialArtifact = {
     ...redacted.value,
     redactionManifest: {
-      applied: ["repository-root", "user-home", "credential-patterns"],
+      applied: ["repository-root", "user-home", "temporary-workspace", "credential-patterns"],
       replacements: redacted.replacements,
     },
   };

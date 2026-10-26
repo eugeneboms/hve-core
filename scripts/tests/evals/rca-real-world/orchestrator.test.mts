@@ -2,17 +2,19 @@
 // SPDX-License-Identifier: MIT
 
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 
+import { runCliTrial } from "../../../evals/rca-real-world/cli-orchestrator.mts";
+import { sha256, stableJson } from "../../../evals/rca-real-world/contracts.mts";
 import {
-  redactArtifact,
   runTrial,
   type ModelClient,
   type SessionCreationConfig,
 } from "../../../evals/rca-real-world/orchestrator.mts";
+import { sanitizeRun } from "../../../evals/rca-real-world/sanitize-run.mts";
 
 const NOW = new Date("2026-10-19T20:00:00.000Z");
 
@@ -85,22 +87,6 @@ function finalResponse(): string {
   ].join("\n\n");
 }
 
-test("redacts Windows and Unix home paths", () => {
-  const result = redactArtifact(
-    {
-      windowsPath: "C:\\Users\\person\\secret",
-      unixPath: "/home/person/secret",
-    },
-    [],
-  );
-
-  assert.deepEqual(result.value, {
-    windowsPath: "[REDACTED_HOME]\\secret",
-    unixPath: "[REDACTED_HOME]/secret",
-  });
-  assert.equal(result.replacements, 2);
-});
-
 test("uses the exact model profile and independently approved tool path", async () => {
   const root = await runRoot();
   let capturedConfig: SessionCreationConfig | undefined;
@@ -117,6 +103,7 @@ test("uses the exact model profile and independently approved tool path", async 
       return {
         onEvent: (handler) => {
           handler({ type: "session.start", credential: "github_pat_abcdefghijklmnopqrstuvwxyz" });
+          handler({ type: "workspace", path: config.workingDirectory });
           return () => undefined;
         },
         sendAndWait: async () => {
@@ -155,7 +142,90 @@ test("uses the exact model profile and independently approved tool path", async 
     false,
   );
   assert.doesNotMatch(JSON.stringify(artifact), /github_pat_|HVE-SRE-skill/i);
+  assert.ok(capturedConfig);
+  assert.equal(JSON.stringify(artifact).includes(capturedConfig.workingDirectory), false);
+  const persisted = await readFile(
+    join(root, "sessions", "case-01", "trial-1", "session-artifact.json"),
+    "utf8",
+  );
+  assert.equal(persisted.includes(JSON.stringify(capturedConfig.workingDirectory).slice(1, -1)), false);
   assert.ok(artifact.redactionManifest.replacements >= 1);
+});
+
+test("redacts CLI workspace paths in persisted errors and keeps hashes consistent", async (context) => {
+  const root = await runRoot();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  let workspace: string | undefined;
+  const artifact = await runCliTrial({
+    repositoryRoot: resolve("."),
+    runRoot: root,
+    runId: "cli-redaction",
+    caseId: "case-01",
+    trial: 1,
+    cliInvoker: async (_args, options) => {
+      workspace = options.cwd;
+      throw new Error(`CLI failure in ${options.cwd}`);
+    },
+    clock: () => NOW,
+  });
+  assert.ok(workspace);
+  assert.equal(artifact.endReason, "error");
+  assert.equal(artifact.error, "CLI failure in [REDACTED_PATH]");
+  const sessionRoot = join(root, "sessions", "case-01", "trial-1");
+  const persisted = await readFile(join(sessionRoot, "session-artifact.json"), "utf8");
+  assert.equal(persisted.includes(JSON.stringify(workspace).slice(1, -1)), false);
+  const hashes = JSON.parse(await readFile(join(sessionRoot, "artifact-hashes.json"), "utf8"));
+  assert.equal(hashes.sessionArtifactSha256, sha256(stableJson(artifact)));
+  assert.ok(artifact.redactionManifest.applied.includes("temporary-workspace"));
+});
+
+test("sanitizes persisted home paths and refreshes scores and checkpoint hashes", async (context) => {
+  const repositoryRoot = await mkdtemp(join(tmpdir(), "rca-sanitize-"));
+  context.after(() => rm(repositoryRoot, { recursive: true, force: true }));
+  const runId = "sanitize-fixture";
+  const root = join(repositoryRoot, ".copilot-tracking", "evaluations", "rcaeval-three-case", runId);
+  await mkdir(root, { recursive: true });
+  const artifact = await runTrial({
+    repositoryRoot: resolve("."),
+    runRoot: root,
+    runId,
+    caseId: "case-01",
+    trial: 1,
+    clientFactory: async () => { throw new Error("Fixture model unavailable"); },
+    clock: () => NOW,
+  });
+  const sessionRoot = join(root, "sessions", "case-01", "trial-1");
+  await writeFile(join(sessionRoot, "session-artifact.json"), stableJson({
+    ...artifact,
+    events: [{ path: join(homedir(), "private-output") }],
+  }));
+  const truthRoot = join(root, "inputs", "scorer-only", "truth");
+  await mkdir(truthRoot, { recursive: true });
+  await writeFile(join(truthRoot, "case-01.json"), stableJson({
+    neutralId: "case-01",
+    sourcePath: "held-out-case-01",
+    rootCauseService: "adservice",
+    fault: "cpu",
+    compatibleMechanism: "CPU saturation",
+  }));
+  await writeFile(join(root, "evaluation-summary.json"), stableJson({ trials: [] }));
+  await writeFile(join(root, "round-one-checkpoint.json"), stableJson({
+    decision: "pause", trialResultHashes: {},
+  }));
+  const result = await sanitizeRun(repositoryRoot, runId);
+  assert.equal(result.sessions, 1);
+  assert.ok(result.replacements >= 1);
+  const sanitized = JSON.parse(await readFile(join(sessionRoot, "session-artifact.json"), "utf8"));
+  assert.equal(sanitized.events[0].path.startsWith("[REDACTED_PATH]"), true);
+  assert.ok(sanitized.redactionManifest.applied.includes("temporary-workspace"));
+  const hashes = JSON.parse(await readFile(join(sessionRoot, "artifact-hashes.json"), "utf8"));
+  assert.equal(hashes.sessionArtifactSha256, sha256(stableJson(sanitized)));
+  const score = JSON.parse(await readFile(join(sessionRoot, "trial-result.json"), "utf8"));
+  const summary = JSON.parse(await readFile(join(root, "evaluation-summary.json"), "utf8"));
+  const checkpoint = JSON.parse(await readFile(join(root, "round-one-checkpoint.json"), "utf8"));
+  assert.equal(score.hashes.sessionArtifactSha256, hashes.sessionArtifactSha256);
+  assert.deepEqual(summary.trials, [score]);
+  assert.equal(checkpoint.trialResultHashes["case-01"], score.hashes.resultSha256);
 });
 
 test("fails closed before sending when the exact model profile is unavailable", async () => {

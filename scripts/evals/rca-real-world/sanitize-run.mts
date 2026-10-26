@@ -6,7 +6,8 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 import { createSchedule, readJson, sha256, stableJson, writeJson } from "./contracts.mts";
-import { redactArtifact, type TrialArtifact } from "./orchestrator.mts";
+import type { TrialArtifact } from "./orchestrator.mts";
+import { redactArtifact } from "./redaction.mts";
 import { scorePersistedTrial, type TrialResult } from "./scoring.mts";
 
 /** Redacts persisted session artifacts and recomputes every dependent hash and score. */
@@ -37,14 +38,14 @@ export async function sanitizeRun(repositoryRoot: string, runId: string): Promis
       }
       throw error;
     }
-    const redacted = redactArtifact(artifact, [
-      repositoryRoot,
-      process.env.USERPROFILE ?? "",
-    ]);
+    const redacted = redactArtifact(artifact, [repositoryRoot]);
     const sanitized: TrialArtifact = {
       ...redacted.value,
       redactionManifest: {
-        applied: ["repository-root", "user-home", "credential-patterns"],
+        applied: [...new Set([
+          ...artifact.redactionManifest.applied,
+          "repository-root", "user-home", "credential-patterns",
+        ])],
         replacements: artifact.redactionManifest.replacements + redacted.replacements,
       },
     };

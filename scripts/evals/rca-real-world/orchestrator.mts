@@ -25,6 +25,7 @@ import {
   type ApprovalConsumer,
   type ToolDefinition,
 } from "./evidence-tools.mts";
+import { redactArtifact } from "./redaction.mts";
 
 export interface ModelInfo {
   readonly id: string;
@@ -251,11 +252,11 @@ export async function runTrial(options: RunTrialOptions): Promise<TrialArtifact>
     approvalLedger,
     hashes,
   };
-  const redacted = redactArtifact(rawArtifact, [options.repositoryRoot, process.env.USERPROFILE ?? ""]);
+  const redacted = redactArtifact(rawArtifact, [options.repositoryRoot, workspace]);
   const artifact: TrialArtifact = {
     ...redacted.value,
     redactionManifest: {
-      applied: ["repository-root", "user-home", "credential-patterns"],
+      applied: ["repository-root", "user-home", "temporary-workspace", "credential-patterns"],
       replacements: redacted.replacements,
     },
   };
@@ -453,41 +454,4 @@ async function createCopilotClient(workspace: string): Promise<ModelClient> {
       };
     },
   };
-}
-
-/** Redacts host paths and credential-shaped values before trace persistence. */
-export function redactArtifact<T>(value: T, explicitValues: readonly string[]): {
-  readonly value: T;
-  readonly replacements: number;
-} {
-  let text = stableJson(value);
-  let replacements = 0;
-  for (const secret of explicitValues.filter((item) => item.length >= 4)) {
-    const encodedSecret = JSON.stringify(secret).slice(1, -1);
-    const next = text.split(encodedSecret).join("[REDACTED_PATH]");
-    if (next !== text) {
-      replacements += text.split(encodedSecret).length - 1;
-      text = next;
-    }
-  }
-  text = text.replace(/[A-Za-z]:\\\\Users\\\\[^\\"/]+/gi, () => {
-    replacements += 1;
-    return "[REDACTED_HOME]";
-  });
-  text = text.replace(/\/(?:home|Users)\/[^/\\"']+/g, () => {
-    replacements += 1;
-    return "[REDACTED_HOME]";
-  });
-  const patterns = [
-    /(?:ghp|github_pat|gho|ghu|ghs)_[A-Za-z0-9_]{20,}/g,
-    /(?:Bearer\s+)[A-Za-z0-9._~+/=-]{16,}/gi,
-    /(?:api[_-]?key|token|password|secret)["']?\s*[:=]\s*["'][^"']+["']/gi,
-  ];
-  for (const pattern of patterns) {
-    text = text.replace(pattern, () => {
-      replacements += 1;
-      return "[REDACTED_CREDENTIAL]";
-    });
-  }
-  return { value: JSON.parse(text) as T, replacements };
 }
