@@ -4,7 +4,7 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 
-import { readJson, writeJson } from "./contracts.mts";
+import { EVALUATION_RUN_DIRECTORY, readJson, writeJson } from "./contracts.mts";
 import type { EvaluationSummary } from "./runner.mts";
 
 interface RunManifest {
@@ -125,7 +125,7 @@ export async function generateEvidenceReport(options: {
     options.reviewDate,
   );
   await mkdir(reviewRoot, { recursive: true });
-  const reviewPath = join(reviewRoot, "rcaeval-three-case-review.md");
+  const reviewPath = join(reviewRoot, `${EVALUATION_RUN_DIRECTORY}-review.md`);
   await writeFile(
     reviewPath,
     renderReview(summary, manifest, commands.commands, adjudications),

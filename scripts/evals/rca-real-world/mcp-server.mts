@@ -7,8 +7,12 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
-import type { ApprovalLedgerArtifact, FixtureApprovalRecord } from "./approval.mts";
-import { sha256, stableJson, writeJson } from "./contracts.mts";
+import {
+  consumeFixtureApproval,
+  type ApprovalLedgerArtifact,
+  type FixtureApprovalRecord,
+} from "./approval.mts";
+import { writeJson } from "./contracts.mts";
 import {
   createEvidenceTools,
   type ApprovalConsumer,
@@ -18,14 +22,14 @@ import {
 
 interface JsonRpcRequest {
   readonly jsonrpc: "2.0";
-  readonly id?: string | number;
+  readonly id?: string | number | null;
   readonly method: string;
   readonly params?: Record<string, unknown>;
 }
 
 interface JsonRpcResponse {
   readonly jsonrpc: "2.0";
-  readonly id: string | number;
+  readonly id: string | number | null;
   readonly result?: unknown;
   readonly error?: { readonly code: number; readonly message: string };
 }
@@ -58,34 +62,9 @@ export class FileApprovalConsumer implements ApprovalConsumer {
     operation: string,
     parameters: Readonly<Record<string, unknown>>,
   ): string {
-    const parameterHash = sha256(stableJson(redact(parameters)));
-    const index = this.#ledger.records.findIndex(
-      (record) =>
-        record.tool === tool &&
-        record.operation === operation &&
-        record.parameterHash === parameterHash &&
-        record.status === "Approved",
+    return consumeFixtureApproval(
+      this.#ledger.records, tool, operation, parameters, this.#clock(),
     );
-    if (index < 0) {
-      throw new Error(`No exact simulated approval for ${tool}/${operation}`);
-    }
-    const record = this.#ledger.records[index]!;
-    const now = this.#clock();
-    if (Date.parse(record.expiresAt) <= now.getTime()) {
-      this.#ledger.records[index] = { ...record, status: "Expired" };
-      throw new Error(`Simulated approval expired for ${tool}/${operation}`);
-    }
-    if (record.consumedCallCount >= record.maximumCallCount) {
-      throw new Error(`Simulated approval call count exhausted for ${tool}/${operation}`);
-    }
-    const consumedCallCount = record.consumedCallCount + 1;
-    this.#ledger.records[index] = {
-      ...record,
-      consumedCallCount,
-      verificationTimes: [...record.verificationTimes, now.toISOString()],
-      status: consumedCallCount === record.maximumCallCount ? "Consumed" : "Approved",
-    };
-    return record.approvalId;
   }
 
   /** Returns the updated fixture ledger for persistence after each MCP call. */
@@ -173,6 +152,61 @@ export async function handleMcpRequest(
   return failure(request.id, -32601, `Unsupported MCP method: ${request.method}`);
 }
 
+/**
+ * Parses one MCP message, distinguishing invalid JSON, invalid requests, and handler failures.
+ *
+ * Unknown request IDs use null. Handler errors preserve the request ID; notifications never
+ * receive an error response.
+ */
+export async function handleMcpMessage(
+  line: string,
+  tools: readonly ToolDefinition[],
+  persist: () => Promise<void>,
+): Promise<JsonRpcResponse | undefined> {
+  let request: unknown;
+  try {
+    request = JSON.parse(line);
+  } catch (error) {
+    return failure(null, -32700, error instanceof Error ? error.message : String(error));
+  }
+  if (request === null || typeof request !== "object" || Array.isArray(request)) {
+    return failure(null, -32600, "Invalid JSON-RPC request");
+  }
+  const id = "id" in request ? request.id : undefined;
+  const params = "params" in request ? request.params : undefined;
+  const validId = id === undefined || id === null || typeof id === "string" ||
+    (typeof id === "number" && Number.isFinite(id));
+  if (
+    !("jsonrpc" in request) || request.jsonrpc !== "2.0" ||
+    !("method" in request) || typeof request.method !== "string" ||
+    !validId ||
+    (params !== undefined && (
+      params === null || typeof params !== "object" ||
+      Array.isArray(params)
+    ))
+  ) {
+    return failure(
+      validId && id !== undefined ? id : null, -32600, "Invalid JSON-RPC request",
+    );
+  }
+  const parsedRequest: JsonRpcRequest = {
+    jsonrpc: "2.0",
+    id,
+    method: request.method,
+    params: params === undefined ? undefined : Object.fromEntries(Object.entries(params)),
+  };
+  try {
+    return await handleMcpRequest(parsedRequest, tools, persist);
+  } catch (error) {
+    if (parsedRequest.id === undefined) {
+      return undefined;
+    }
+    return failure(
+      parsedRequest.id, -32603, error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
 async function runServer(): Promise<void> {
   const { values } = parseArgs({
     options: {
@@ -217,38 +251,19 @@ async function runServer(): Promise<void> {
     if (!line) {
       continue;
     }
-    let response: JsonRpcResponse | undefined;
-    try {
-      const request = JSON.parse(line) as JsonRpcRequest;
-      response = await handleMcpRequest(request, evidence.tools, persist);
-    } catch (error) {
-      response = failure(
-        0,
-        -32700,
-        error instanceof Error ? error.message : String(error),
-      );
-    }
+    const response = await handleMcpMessage(line, evidence.tools, persist);
     if (response) {
       process.stdout.write(`${JSON.stringify(response)}\n`);
     }
   }
 }
 
-function success(id: string | number, result: unknown): JsonRpcResponse {
+function success(id: string | number | null, result: unknown): JsonRpcResponse {
   return { jsonrpc: "2.0", id, result };
 }
 
-function failure(id: string | number, code: number, message: string): JsonRpcResponse {
+function failure(id: string | number | null, code: number, message: string): JsonRpcResponse {
   return { jsonrpc: "2.0", id, error: { code, message } };
-}
-
-function redact(parameters: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
-  return Object.fromEntries(
-    Object.entries(parameters).map(([key, value]) => [
-      key,
-      /token|secret|password|credential|authorization/i.test(key) ? "[REDACTED]" : value,
-    ]),
-  );
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

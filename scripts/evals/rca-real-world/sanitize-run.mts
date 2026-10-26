@@ -5,7 +5,9 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
-import { createSchedule, readJson, sha256, stableJson, writeJson } from "./contracts.mts";
+import {
+  EVALUATION_RUN_DIRECTORY, createSchedule, readJson, sha256, stableJson, writeJson,
+} from "./contracts.mts";
 import type { TrialArtifact } from "./orchestrator.mts";
 import { redactArtifact } from "./redaction.mts";
 import { scorePersistedTrial, type TrialResult } from "./scoring.mts";
@@ -19,7 +21,7 @@ export async function sanitizeRun(repositoryRoot: string, runId: string): Promis
     repositoryRoot,
     ".copilot-tracking",
     "evaluations",
-    "rcaeval-three-case",
+    EVALUATION_RUN_DIRECTORY,
     runId,
   );
   const scorerPath = join(import.meta.dirname, "scoring.mts");

@@ -10,6 +10,57 @@ import { createInterface } from "node:readline";
 import { test } from "node:test";
 
 import { writeJson } from "../../../evals/rca-real-world/contracts.mts";
+import { handleMcpMessage } from "../../../evals/rca-real-world/mcp-server.mts";
+
+test("uses null IDs for parse failures and rejects invalid JSON-RPC request shapes", async () => {
+  const parseError = await handleMcpMessage("{invalid-json", [], async () => undefined);
+  assert.equal(parseError?.id, null);
+  assert.equal(parseError?.error?.code, -32700);
+  for (const request of [null, [], {}, { jsonrpc: "2.0", id: {}, method: "ping" }]) {
+    const response = await handleMcpMessage(JSON.stringify(request), [], async () => undefined);
+    assert.equal(response?.id, null);
+    assert.equal(response?.error?.code, -32600);
+  }
+  const invalid = await handleMcpMessage(
+    JSON.stringify({ jsonrpc: "1.0", id: "known-id", method: "ping" }),
+    [], async () => undefined,
+  );
+  assert.equal(invalid?.id, "known-id");
+  assert.equal(invalid?.error?.code, -32600);
+});
+
+test("preserves numeric zero, string, and null IDs on valid requests", async () => {
+  for (const id of [0, "request-id", null]) {
+    const response = await handleMcpMessage(
+      JSON.stringify({ jsonrpc: "2.0", id, method: "ping" }), [], async () => undefined,
+    );
+    assert.deepEqual(response, { jsonrpc: "2.0", id, result: {} });
+  }
+  assert.equal(await handleMcpMessage(
+    JSON.stringify({ jsonrpc: "2.0", method: "ping" }), [], async () => undefined,
+  ), undefined);
+});
+
+test("reports handler failures as internal errors with the original request ID", async () => {
+  for (const id of [0, "request-id"]) {
+    const response = await handleMcpMessage(
+      JSON.stringify({
+        jsonrpc: "2.0", id, method: "tools/call",
+        params: { name: "fixture-tool", arguments: {} },
+      }),
+      [{
+        name: "fixture-tool",
+        description: "Fixture tool",
+        parameters: { type: "object" },
+        handler: async () => "fixture-result",
+      }],
+      async () => { throw new Error("Fixture persistence failed"); },
+    );
+    assert.equal(response?.id, id);
+    assert.equal(response?.error?.code, -32603);
+    assert.match(response?.error?.message ?? "", /Fixture persistence failed/);
+  }
+});
 
 test("serves only bounded MCP tools and blocks unapproved calls", async () => {
   const root = await mkdtemp(join(tmpdir(), "rca-mcp-"));
@@ -48,16 +99,17 @@ test("serves only bounded MCP tools and blocks unapproved calls", async () => {
     child.stderr.once("data", (chunk) => reject(new Error(String(chunk))));
     lines.on("line", (line) => {
       responses.push(JSON.parse(line));
-      if (responses.length === 3) {
+      if (responses.length === 4) {
         child.stdin.end();
         resolveCompleted();
       }
     });
   });
+  child.stdin.write("{invalid-json\n");
   child.stdin.write(
     `${JSON.stringify({
       jsonrpc: "2.0",
-      id: 1,
+      id: 0,
       method: "initialize",
       params: { protocolVersion: "2025-06-18" },
     })}\n`,
@@ -75,11 +127,15 @@ test("serves only bounded MCP tools and blocks unapproved calls", async () => {
   );
   await completed;
 
-  const initialize = responses[0] as { result: { serverInfo: { name: string } } };
-  const tools = responses[1] as { result: { tools: readonly { name: string }[] } };
-  const blocked = responses[2] as {
+  const parseError = responses[0] as { id: null; error: { code: number } };
+  const initialize = responses[1] as { id: number; result: { serverInfo: { name: string } } };
+  const tools = responses[2] as { result: { tools: readonly { name: string }[] } };
+  const blocked = responses[3] as {
     result: { isError: boolean; content: readonly { text: string }[] };
   };
+  assert.equal(parseError.id, null);
+  assert.equal(parseError.error.code, -32700);
+  assert.equal(initialize.id, 0);
   assert.equal(initialize.result.serverInfo.name, "hve-rca-evidence");
   assert.deepEqual(
     tools.result.tools.map((tool) => tool.name),

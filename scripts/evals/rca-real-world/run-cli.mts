@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 import { runRound } from "./runner.mts";
-import { readJson, writeJson } from "./contracts.mts";
+import { EVALUATION_RUN_DIRECTORY, readJson, writeJson } from "./contracts.mts";
 
 const { values } = parseArgs({
   options: {
@@ -28,7 +28,7 @@ const runRoot = join(
   resolve(import.meta.dirname, "..", "..", ".."),
   ".copilot-tracking",
   "evaluations",
-  "rcaeval-three-case",
+  EVALUATION_RUN_DIRECTORY,
   values["run-id"],
 );
 const commandPath = join(runRoot, "commands.json");

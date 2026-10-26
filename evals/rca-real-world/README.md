@@ -94,8 +94,8 @@ npm run test:rca-eval
 npm run ci:rca-eval -- --run-id <run-id> --round 1
 ```
 
-The preparation and model-backed commands are added by the harness implementation. The
-model-backed command is CI-owned because it uses external data, credentials, and model budget.
+The model-backed command is CI-owned because it uses external data, credentials, and model budget.
+The report command defaults to today's UTC date; use `--date YYYY-MM-DD` to specify another date.
 
 ## Trial cadence and checkpoint
 

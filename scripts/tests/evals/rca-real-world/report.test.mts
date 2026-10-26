@@ -8,6 +8,23 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { generateEvidenceReport, scanArtifacts } from "../../../evals/rca-real-world/report.mts";
+import { parseReportArguments } from "../../../evals/rca-real-world/report-cli.mts";
+
+test("report CLI defaults to the current UTC day and preserves explicit date overrides", () => {
+  const now = new Date("2026-10-26T23:55:00-07:00");
+  assert.deepEqual(parseReportArguments(["--run-id", "fixture"], now), {
+    runId: "fixture",
+    reviewDate: "2026-10-27",
+  });
+  assert.deepEqual(parseReportArguments([
+    "--run-id", "fixture", "--date", "2026-10-19",
+  ], now), { runId: "fixture", reviewDate: "2026-10-19" });
+  assert.equal(
+    parseReportArguments(["--run-id", "fixture"]).reviewDate,
+    new Date().toISOString().slice(0, 10),
+  );
+  assert.throws(() => parseReportArguments([], now), /Usage:/);
+});
 
 async function reportFixture(): Promise<{
   readonly repositoryRoot: string;

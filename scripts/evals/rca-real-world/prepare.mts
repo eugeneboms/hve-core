@@ -12,6 +12,7 @@ import { zstdDecompressSync } from "node:zlib";
 import {
   TRANSFORMATION_VERSION,
   EVALUATION_CASE_IDS,
+  EVALUATION_RUN_DIRECTORY,
   type CaseContract,
   type EvaluationContract,
   type Modality,
@@ -80,7 +81,7 @@ const PARQUET_BUNDLE_SHA256 = "fdd28364b0dde800dea00979cbd3ddee26a053bb0d15b1782
 const PARQUET_READER_IDENTITY = `hyparquet@1.31.5:${PARQUET_BUNDLE_SHA256}`;
 
 /**
- * Prepares three neutral RCAEval workspaces and held-out scoring manifests.
+ * Prepares the configured neutral RCAEval workspaces and held-out scoring manifests.
  *
  * The run directory must not already exist. Source files are downloaded only below the
  * scorer-only root, verified against the committed contract, transformed into deterministic
@@ -98,7 +99,7 @@ export async function prepareCases(options: PreparationOptions): Promise<Prepara
     options.repositoryRoot,
     ".copilot-tracking",
     "evaluations",
-    "rcaeval-three-case",
+    EVALUATION_RUN_DIRECTORY,
   );
   const runRoot = resolveInside(evaluationsRoot, options.runId);
   const modelVisibleRoot = resolveInside(runRoot, "inputs/model-visible");
@@ -191,7 +192,7 @@ export async function verifyPreparedRun(
     repositoryRoot,
     ".copilot-tracking",
     "evaluations",
-    "rcaeval-three-case",
+    EVALUATION_RUN_DIRECTORY,
     runId,
   );
   const manifest = await readJson<{

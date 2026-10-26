@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  EVALUATION_RUN_DIRECTORY,
   compareStrings,
   createSchedule,
   resolveInside,
@@ -12,6 +13,10 @@ import {
   validateContract,
   type EvaluationContract,
 } from "../../../evals/rca-real-world/contracts.mts";
+
+test("preserves the existing evaluation directory name", () => {
+  assert.equal(EVALUATION_RUN_DIRECTORY, "rcaeval-three-case");
+});
 
 function validContract(): EvaluationContract {
   const file = (name: string) => ({

@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import {
   EXPECTED_CONTEXT_TIER,
   EVALUATION_CASE_IDS,
+  EVALUATION_RUN_DIRECTORY,
   EXPECTED_MODEL,
   EXPECTED_REASONING_EFFORT,
   TRANSFORMATION_VERSION,
@@ -68,7 +69,7 @@ export async function runRound(options: RunRoundOptions): Promise<EvaluationSumm
       options.repositoryRoot,
       ".copilot-tracking",
       "evaluations",
-      "rcaeval-three-case",
+      EVALUATION_RUN_DIRECTORY,
       options.runId,
     );
   const prepared = await assertPrepared(runRoot);

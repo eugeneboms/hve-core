@@ -104,34 +104,7 @@ export class FixtureApprovalLedger {
     operation: string,
     parameters: Readonly<Record<string, unknown>>,
   ): string {
-    const now = this.#clock();
-    const parameterHash = sha256(stableJson(redact(parameters)));
-    const recordIndex = this.#records.findIndex(
-      (record) =>
-        record.tool === tool &&
-        record.operation === operation &&
-        record.parameterHash === parameterHash &&
-        record.status === "Approved",
-    );
-    if (recordIndex < 0) {
-      throw new Error(`No exact simulated approval for ${tool}/${operation}`);
-    }
-    const record = this.#records[recordIndex]!;
-    if (Date.parse(record.expiresAt) <= now.getTime()) {
-      this.#records[recordIndex] = { ...record, status: "Expired" };
-      throw new Error(`Simulated approval expired for ${tool}/${operation}`);
-    }
-    if (record.consumedCallCount >= record.maximumCallCount) {
-      throw new Error(`Simulated approval call count exhausted for ${tool}/${operation}`);
-    }
-    const consumedCallCount = record.consumedCallCount + 1;
-    this.#records[recordIndex] = {
-      ...record,
-      consumedCallCount,
-      verificationTimes: [...record.verificationTimes, now.toISOString()],
-      status: consumedCallCount === record.maximumCallCount ? "Consumed" : "Approved",
-    };
-    return record.approvalId;
+    return consumeFixtureApproval(this.#records, tool, operation, parameters, this.#clock());
   }
 
   /** Returns a detached artifact snapshot suitable for deterministic persistence. */
@@ -146,6 +119,49 @@ export class FixtureApprovalLedger {
       })),
     };
   }
+}
+
+/**
+ * Consumes one exact simulated approval, replacing its record in the supplied mutable array.
+ *
+ * Expired records transition to Expired before throwing. Successful calls update the count,
+ * verification time, and status; no matching approval or an exhausted call count throws.
+ * Hashes bind the original parameters, not the redacted display tree.
+ */
+export function consumeFixtureApproval(
+  records: FixtureApprovalRecord[],
+  tool: string,
+  operation: string,
+  parameters: Readonly<Record<string, unknown>>,
+  now: Date,
+): string {
+  const parameterHash = sha256(stableJson(parameters));
+  const index = records.findIndex(
+    (record) =>
+      record.tool === tool &&
+      record.operation === operation &&
+      record.parameterHash === parameterHash &&
+      record.status === "Approved",
+  );
+  if (index < 0) {
+    throw new Error(`No exact simulated approval for ${tool}/${operation}`);
+  }
+  const record = records[index]!;
+  if (Date.parse(record.expiresAt) <= now.getTime()) {
+    records[index] = { ...record, status: "Expired" };
+    throw new Error(`Simulated approval expired for ${tool}/${operation}`);
+  }
+  if (record.consumedCallCount >= record.maximumCallCount) {
+    throw new Error(`Simulated approval call count exhausted for ${tool}/${operation}`);
+  }
+  const consumedCallCount = record.consumedCallCount + 1;
+  records[index] = {
+    ...record,
+    consumedCallCount,
+    verificationTimes: [...record.verificationTimes, now.toISOString()],
+    status: consumedCallCount === record.maximumCallCount ? "Consumed" : "Approved",
+  };
+  return record.approvalId;
 }
 
 function validateAndCreate(
@@ -200,7 +216,7 @@ function validateAndCreate(
   const timestamp = now.toISOString();
   return {
     ...request,
-    parameters: redact(request.parameters),
+    parameters: redactApprovalParameters(request.parameters),
     approvalId: `fixture-${String(index + 1).padStart(3, "0")}-${randomUUID()}`,
     provenance: "evaluation-fixture",
     principal: "simulated-requester",
@@ -211,16 +227,31 @@ function validateAndCreate(
     approvedAt: timestamp,
     verificationTimes: [],
     consumedCallCount: 0,
-    parameterHash: sha256(stableJson(redact(request.parameters))),
+    parameterHash: sha256(stableJson(request.parameters)),
     status: "Approved",
   };
 }
 
-function redact(parameters: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+/** Returns a detached JSON parameter tree with secret-shaped keys masked at every nesting level. */
+export function redactApprovalParameters(
+  parameters: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
   return Object.fromEntries(
     Object.entries(parameters).map(([key, value]) => [
       key,
-      /token|secret|password|credential|authorization/i.test(key) ? "[REDACTED]" : value,
+      /token|secret|password|credential|authorization/i.test(key)
+        ? "[REDACTED]"
+        : redactParameterValue(value),
     ]),
   );
+}
+
+function redactParameterValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(redactParameterValue);
+  }
+  if (value !== null && typeof value === "object") {
+    return redactApprovalParameters(Object.fromEntries(Object.entries(value)));
+  }
+  return value;
 }

@@ -8,7 +8,9 @@ import { join, resolve } from "node:path";
 import { test } from "node:test";
 
 import { runCliTrial } from "../../../evals/rca-real-world/cli-orchestrator.mts";
-import { sha256, stableJson } from "../../../evals/rca-real-world/contracts.mts";
+import {
+  EVALUATION_RUN_DIRECTORY, sha256, stableJson,
+} from "../../../evals/rca-real-world/contracts.mts";
 import {
   runTrial,
   type ModelClient,
@@ -183,7 +185,7 @@ test("sanitizes persisted home paths and refreshes scores and checkpoint hashes"
   const repositoryRoot = await mkdtemp(join(tmpdir(), "rca-sanitize-"));
   context.after(() => rm(repositoryRoot, { recursive: true, force: true }));
   const runId = "sanitize-fixture";
-  const root = join(repositoryRoot, ".copilot-tracking", "evaluations", "rcaeval-three-case", runId);
+  const root = join(repositoryRoot, ".copilot-tracking", "evaluations", EVALUATION_RUN_DIRECTORY, runId);
   await mkdir(root, { recursive: true });
   const artifact = await runTrial({
     repositoryRoot: resolve("."),
