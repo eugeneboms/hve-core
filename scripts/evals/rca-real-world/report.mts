@@ -6,6 +6,8 @@ import { join, relative } from "node:path";
 
 import { EVALUATION_RUN_DIRECTORY, readJson, writeJson } from "./contracts.mts";
 import type { EvaluationSummary } from "./runner.mts";
+import { selectedConditions, trialDirectory, type EvaluationCondition } from "./conditions.mts";
+import { gateSatisfied } from "./scoring.mts";
 
 interface RunManifest {
   readonly repositoryCommit: string;
@@ -30,6 +32,7 @@ interface HumanAdjudications {
   readonly adjudications: readonly {
     readonly caseId: string;
     readonly trial: number;
+    readonly condition: EvaluationCondition;
     readonly gate: string;
     readonly decision: string;
   }[];
@@ -93,6 +96,9 @@ export async function generateEvidenceReport(options: {
   readonly prUpdatePath: string;
 }> {
   const summary = await readJson<EvaluationSummary>(join(options.runRoot, "evaluation-summary.json"));
+  if (summary.schemaVersion !== "2.0.0") {
+    throw new Error("Report generation requires condition-aware schema 2.0.0; start a new evaluation run");
+  }
   const manifest = await readJson<RunManifest>(join(options.runRoot, "run-manifest.json"));
   const commands = await readJson<{ commands: readonly CommandRecord[] }>(
     join(options.runRoot, "commands.json"),
@@ -103,7 +109,7 @@ export async function generateEvidenceReport(options: {
   const excludedRuns = await readOptionalJson<ExcludedRuns>(
     join(options.runRoot, "excluded-runs.json"),
   );
-  const authoritativeCost = await readPremiumRequestCost(options.runRoot, summary);
+  const costs = await readPremiumRequestCosts(options.runRoot, summary);
   const scanFindings = await scanArtifacts(options.runRoot);
   await writeJson(join(options.runRoot, "artifact-scan.json"), {
     schemaVersion: "1.0.0",
@@ -146,7 +152,7 @@ export async function generateEvidenceReport(options: {
       commands.commands,
       adjudications,
       excludedRuns,
-      authoritativeCost,
+      costs,
       options.reviewDate,
     ),
     "utf8",
@@ -163,11 +169,12 @@ function renderCommittedReport(
   commands: readonly CommandRecord[],
   adjudications: HumanAdjudications | undefined,
   excludedRuns: ExcludedRuns | undefined,
-  authoritativeCost: number,
+  costs: Readonly<Record<EvaluationCondition, number | null>>,
   reportDate: string,
 ): string {
   const caseCount = new Set(summary.trials.map((trial) => trial.caseId)).size;
-  const strictPasses = summary.trials.filter((trial) =>
+  const skilled = summary.trials.filter((trial) => trial.condition === "with-skill");
+  const strictPasses = skilled.filter((trial) =>
     effectiveStrictPass(trial, adjudications),
   ).length;
   const serviceMatches = summary.trials.filter(
@@ -179,9 +186,13 @@ function renderCommittedReport(
   const leadingAbstentions = summary.trials.filter(
     (trial) => trial.leadingHypothesis?.status === "abstained",
   ).length;
+  const selectedCosts = selectedConditions(summary.mode).map((condition) => costs[condition]);
+  const authoritativeCost = selectedCosts.some((cost) => cost === null)
+    ? "Unavailable"
+    : selectedCosts.reduce<number>((total, cost) => total + (cost ?? 0), 0);
   return `---
 title: PR 3136 RCAEval evaluation evidence
-description: Sanitized evidence from blinded RCAEval runs of the root-cause-analysis skill
+description: Sanitized evidence from blinded RCAEval skill and skill-free conditions
 author: HVE Core Team
 ms.date: ${reportDate}
 ---
@@ -191,8 +202,9 @@ ms.date: ${reportDate}
 ## Scope
 
 This run evaluated ${caseCount} selected RCAEval fault-injection cases with scheduled trials per
-case. It used GPT-5.6 Sol with medium reasoning effort and the default context tier. Strict RCA
-workflow gates are reported separately from held-out diagnostic results.
+case in the \`${summary.mode}\` condition selection. It used GPT-5.6 Sol with medium reasoning
+effort and the default context tier. Strict RCA workflow gates apply only to the skilled
+condition; both conditions use the same held-out correctness extraction and safety checks.
 
 The cases are controlled faults on microservice testbeds, not organic production incidents.
 ${summary.trials.length} completed sessions cannot establish a general RCA accuracy rate.
@@ -222,11 +234,13 @@ ${commands.map((item) => `| \`${escapeTable(item.command)}\` | ${item.exitCode} 
 
 ## Results
 
-| Case | Trial | Integrity | Strict gates | Set A service | Set B service | Set B status | Correct cause tested | Human review |
-|------|------:|-----------|--------------|---------------|---------------|--------------|----------------------|--------------|
+${renderConditionComparison(summary, costs)}
+
+| Condition | Case | Trial | Integrity | Strict gates | Set A service | Set B service | Set B status | Correct cause tested | Human review |
+|-----------|------|------:|-----------|--------------|---------------|---------------|--------------|----------------------|--------------|
 ${summary.trials.map((trial) => renderTrialRow(trial, adjudications)).join("\n")}
 
-Strict gates passed in ${strictPasses} of ${summary.trials.length} completed sessions. The held-out
+Strict gates passed in ${strictPasses} of ${skilled.length} skilled sessions. The held-out
 root-cause service matched in Set A for ${serviceMatches} sessions and in Set B for
 ${leadingMatches} sessions. Set B abstained in ${leadingAbstentions} sessions. These are exact run
 counts, not population accuracy estimates.
@@ -234,7 +248,7 @@ counts, not population accuracy estimates.
 Round-one checkpoint: **${summary.roundOneCheckpoint?.decision ?? "Unavailable"}**.
 ${
   adjudications
-    ? "The machine wording gate paused round one; the repository user reviewed the exact authorization statements and recorded an effective continue decision."
+    ? "Human adjudications are recorded separately; the original machine checkpoint is preserved."
     : (summary.roundOneCheckpoint?.reasons ?? []).map((reason) => `* ${reason}`).join("\n") ||
       "* No machine gate required a pause."
 }
@@ -252,14 +266,10 @@ the statistical companion as not applicable or blocked and does not invent a p-v
 ## Limitations and review status
 
 ${summary.limitations.map((limitation) => `* ${limitation}`).join("\n")}
-* The preflight configuration probe made before the evaluation consumed 16.93 AI credits and is
-  disclosed separately from the scheduled trials.
 * Raw telemetry, prompts, transcripts, tool payloads, credentials, and host paths are excluded
   from this committed report.
 * Human diagnostic compatibility, unsupported-claim review, and CR-16 disposition are pending.
-* Machine scoring initially rejected the simulated-authority wording. The repository user
-  adjudicated all nine semantically equivalent fixture-boundary statements as passing under this
-  criterion: ${adjudications?.criterion ?? "Unavailable"}
+${adjudications ? `* Human adjudication criterion: ${adjudications.criterion}` : "* No human gate adjudications were supplied."}
 
 ### Excluded harness-development runs
 
@@ -283,7 +293,7 @@ function renderReview(
   adjudications: HumanAdjudications | undefined,
 ): string {
   return `<!-- markdownlint-disable-file -->
-# RCAEval Three-Case Human Review
+# RCAEval Human Review
 
 ## Run Identity
 
@@ -291,6 +301,7 @@ function renderReview(
 * Repository commit: \`${manifest.repositoryCommit}\`
 * Input fingerprint: \`${manifest.inputFingerprint}\`
 * Trial count: ${summary.trials.length}
+* Conditions: ${summary.mode}
 * Round-one decision: ${summary.roundOneCheckpoint?.decision ?? "Unavailable"}
 
 ## Commands
@@ -299,12 +310,12 @@ ${commands.map((item) => `* \`${item.command}\`: exit ${item.exitCode}, ${item.p
 
 ## Trial Review
 
-| Case | Trial | Machine integrity | Machine strict gates | Set A service | Set B service | Set B status | Human disposition | Reviewer rationale |
-|------|------:|-------------------|----------------------|---------------|---------------|--------------|-------------------|--------------------|
+| Condition | Case | Trial | Machine integrity | Machine strict gates | Set A service | Set B service | Set B status | Human disposition | Reviewer rationale |
+|-----------|------|------:|-------------------|----------------------|---------------|---------------|--------------|-------------------|--------------------|
 ${summary.trials
   .map(
     (trial) =>
-      `| ${trial.caseId} | ${trial.trial} | ${trial.integrity} | ${formatStrict(trial, adjudications)} | ${trial.diagnostic.rootCauseService} | ${trial.leadingHypothesis?.rootCauseService ?? "not-reported"} | ${trial.leadingHypothesis?.status ?? "not-reported"} | Pending | Pending |`,
+      `| ${trial.condition} | ${trial.caseId} | ${trial.trial} | ${trial.integrity} | ${formatStrict(trial, adjudications)} | ${trial.diagnostic.rootCauseService} | ${trial.leadingHypothesis?.rootCauseService ?? "not-reported"} | ${trial.leadingHypothesis?.status ?? "not-reported"} | Pending | Pending |`,
   )
   .join("\n")}
 
@@ -329,6 +340,8 @@ function renderPrUpdate(
 
 Executed ${summary.trials.length} blinded sessions across ${caseCount} selected RCAEval fault-injection
 cases using GPT-5.6 Sol, medium reasoning effort, and the default context tier.
+Condition selection: \`${summary.mode}\`. See the evidence report for condition-separated
+outcomes and matched-pair differences; no general skill-effectiveness claim is implied.
 
 ### Validation
 
@@ -351,19 +364,20 @@ function renderTrialRow(
   trial: EvaluationSummary["trials"][number],
   adjudications: HumanAdjudications | undefined,
 ): string {
-  return `| ${trial.caseId} | ${trial.trial} | ${trial.integrity} | ${formatStrict(trial, adjudications)} | ${trial.diagnostic.rootCauseService} | ${trial.leadingHypothesis?.rootCauseService ?? "not-reported"} | ${trial.leadingHypothesis?.status ?? "not-reported"} | ${trial.diagnostic.correctCauseTested} | ${trial.humanReview} |`;
+  return `| ${trial.condition} | ${trial.caseId} | ${trial.trial} | ${trial.integrity} | ${formatStrict(trial, adjudications)} | ${trial.diagnostic.rootCauseService} | ${trial.leadingHypothesis?.rootCauseService ?? "not-reported"} | ${trial.leadingHypothesis?.status ?? "not-reported"} | ${trial.condition === "without-skill" ? "N/A (workflow)" : trial.diagnostic.correctCauseTested} | ${trial.humanReview} |`;
 }
 
 function formatStrict(
   trial: EvaluationSummary["trials"][number],
   adjudications: HumanAdjudications | undefined,
 ): string {
-  const values = Object.values(trial.strictGates);
+  const failed = Object.entries(trial.strictGates)
+    .filter(([gate, value]) => !gateSatisfied(trial.condition, gate, value));
   return effectiveStrictPass(trial, adjudications)
-    ? values.every((value) => value === true)
-      ? "pass"
+    ? failed.length === 0
+      ? trial.condition === "without-skill" ? "pass; skill workflow N/A" : "pass"
       : "pass (human-adjudicated wording)"
-    : `${values.filter((value) => value !== true).length} not passed`;
+    : `${failed.length} not passed`;
 }
 
 function effectiveStrictPass(
@@ -371,7 +385,7 @@ function effectiveStrictPass(
   adjudications: HumanAdjudications | undefined,
 ): boolean {
   const failed = Object.entries(trial.strictGates)
-    .filter(([, value]) => value !== true)
+    .filter(([gate, value]) => !gateSatisfied(trial.condition, gate, value))
     .map(([gate]) => gate);
   if (failed.length === 0) {
     return true;
@@ -383,34 +397,93 @@ function effectiveStrictPass(
       (item) =>
         item.caseId === trial.caseId &&
         item.trial === trial.trial &&
+        item.condition === trial.condition &&
         item.gate === "approvalClearlySimulated" &&
         item.decision === "pass",
     ) === true
   );
 }
 
-async function readPremiumRequestCost(
+async function readPremiumRequestCosts(
   runRoot: string,
   summary: EvaluationSummary,
-): Promise<number> {
-  let cost = 0;
+): Promise<Record<EvaluationCondition, number | null>> {
+  const costs: Record<EvaluationCondition, number | null> = { "with-skill": 0, "without-skill": 0 };
   for (const trial of summary.trials) {
     const artifact = await readJson<{
       cliCapture?: {
+        usageTurn1?: { totalPremiumRequestCost?: number };
         usageTurn2?: { totalPremiumRequestCost?: number };
         usageTurn3?: { totalPremiumRequestCost?: number };
         usageTurn4?: { totalPremiumRequestCost?: number };
       };
     }>(
-      join(runRoot, "sessions", trial.caseId, `trial-${trial.trial}`, "session-artifact.json"),
+      join(trialDirectory(runRoot, trial.caseId, trial.trial, trial.condition), "session-artifact.json"),
     );
-    cost +=
+    const cost =
       artifact.cliCapture?.usageTurn4?.totalPremiumRequestCost ??
       artifact.cliCapture?.usageTurn3?.totalPremiumRequestCost ??
       artifact.cliCapture?.usageTurn2?.totalPremiumRequestCost ??
-      0;
+      artifact.cliCapture?.usageTurn1?.totalPremiumRequestCost;
+    const previous = costs[trial.condition];
+    costs[trial.condition] = previous === null ||
+      typeof cost !== "number" || !Number.isFinite(cost) || cost < 0
+      ? null
+      : previous + cost;
   }
-  return cost;
+  return costs;
+}
+
+function renderConditionComparison(
+  summary: EvaluationSummary,
+  costs: Readonly<Record<EvaluationCondition, number | null>>,
+): string {
+  const rows = selectedConditions(summary.mode).map((condition) => {
+    const trials = summary.trials.filter((trial) => trial.condition === condition);
+    return `| ${condition} | ${trials.length} | ${trials.filter((trial) => trial.integrity !== "pass").length} | ${trials.filter((trial) => trial.diagnostic.rootCauseService === "match").length} | ${trials.filter((trial) => trial.leadingHypothesis.rootCauseService === "match").length} | ${costs[condition] ?? "Unavailable"} |`;
+  });
+  const table = [
+    "| Condition | Sessions | Integrity failures | Set A service matches | Set B service matches | Premium requests |",
+    "|-----------|---------:|-------------------:|----------------------:|----------------------:|-----------------:|",
+    ...rows,
+  ].join("\n");
+  if (summary.mode !== "both") {
+    return `${table}\n\nSingle-condition run: no paired skill-lift estimate is available.\n`;
+  }
+  const pairKeys = new Set(summary.trials.map((trial) => `${trial.caseId}/${trial.trial}`));
+  const pairs = [...pairKeys].flatMap((key) => {
+    const trials = summary.trials.filter((trial) => `${trial.caseId}/${trial.trial}` === key);
+    const skilled = trials.find((trial) => trial.condition === "with-skill");
+    const baseline = trials.find((trial) => trial.condition === "without-skill");
+    return skilled?.integrity === "pass" && baseline?.integrity === "pass"
+      ? [{ skilled, baseline }]
+      : [];
+  });
+  const differences = (["diagnostic", "leadingHypothesis"] as const).map((field, index) => {
+    const skillOnly = pairs.filter(({ skilled, baseline }) =>
+      skilled[field].rootCauseService === "match" && baseline[field].rootCauseService !== "match",
+    ).length;
+    const baselineOnly = pairs.filter(({ skilled, baseline }) =>
+      baseline[field].rootCauseService === "match" && skilled[field].rootCauseService !== "match",
+    ).length;
+    const difference = pairs.length === 0 ? "Unavailable" : (100 * (skillOnly - baselineOnly) / pairs.length).toFixed(1);
+    return `| Set ${index === 0 ? "A" : "B"} service | ${pairs.length} | ${skillOnly} | ${baselineOnly} | ${difference} |`;
+  });
+  return `${table}
+
+| Correctness metric | Valid pairs | Skill-only matches | Baseline-only matches | Skill minus baseline (percentage points) |
+|--------------------|------------:|-------------------:|----------------------:|----------------------------------------:|
+${differences.join("\n")}
+
+Pairs match the same case and trial; both sessions must pass integrity.
+Excluded incomplete or invalid pairs: ${pairKeys.size - pairs.length}.
+Unassessed diagnoses and abstentions are not matches. These are descriptive differences on
+selected dependent cases, not statistical significance or a general effectiveness estimate.
+The bounded host-directed evidence protocol and output-schema instructions apply to both
+conditions. Skill workflow conformance is not a baseline correctness criterion.
+Set B service match is the primary shared diagnostic endpoint. Set A also reflects different
+diagnosis-claim constraints and must not be interpreted as a common workflow-completion measure.
+`;
 }
 
 async function readOptionalJson<T>(path: string): Promise<T | undefined> {

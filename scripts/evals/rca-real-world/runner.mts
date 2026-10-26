@@ -15,7 +15,6 @@ import {
   TRANSFORMATION_VERSION,
   type PreparedCaseManifest,
   compareStrings,
-  createSchedule,
   readJson,
   sha256,
   stableJson,
@@ -27,6 +26,13 @@ import {
   scorePersistedTrial,
   type TrialResult,
 } from "./scoring.mts";
+import {
+  createConditionSchedule,
+  parseEvaluationMode,
+  selectedConditions,
+  trialDirectory,
+  type EvaluationMode,
+} from "./conditions.mts";
 
 const execFileAsync = promisify(execFile);
 const SOURCE_REVISION = "afeacb11bcc94dadfd1c8f483ee4377b2b8b614e";
@@ -36,18 +42,21 @@ export interface RunRoundOptions {
   readonly runRoot?: string;
   readonly runId: string;
   readonly round: 1 | 2 | 3;
+  /** Defaults to both on a new run; continuation reuses the immutable manifest selection. */
+  readonly mode?: EvaluationMode;
   readonly cliInvoker?: CliInvoker;
   readonly clock?: () => Date;
 }
 
 export interface EvaluationSummary {
-  readonly schemaVersion: "1.0.0";
+  readonly schemaVersion: "2.0.0";
+  readonly mode: EvaluationMode;
   readonly runId: string;
   readonly sourceRevision: string;
   readonly model: string;
   readonly reasoningEffort: string;
   readonly contextTier: string;
-  readonly trialOrder: readonly { caseId: string; trial: number }[];
+  readonly trialOrder: ReturnType<typeof createConditionSchedule>;
   readonly trials: readonly TrialResult[];
   readonly roundOneCheckpoint?: {
     readonly decision: "continue" | "pause";
@@ -75,6 +84,19 @@ export async function runRound(options: RunRoundOptions): Promise<EvaluationSumm
   const prepared = await assertPrepared(runRoot);
   const currentFingerprint = await createInputFingerprint(options.repositoryRoot, runRoot);
   const manifestPath = join(runRoot, "run-manifest.json");
+  const priorManifest = options.round === 1 ? undefined : await readJson<{
+    schemaVersion: string;
+    mode: string;
+    runId: string;
+    inputFingerprint: string;
+  }>(manifestPath);
+  if (priorManifest && (priorManifest.schemaVersion !== "2.0.0" || priorManifest.runId !== options.runId)) {
+    throw new Error("A new paired-evaluation run is required for this manifest");
+  }
+  const mode = parseEvaluationMode(options.mode ?? priorManifest?.mode ?? "both");
+  if (priorManifest && priorManifest.mode !== mode) {
+    throw new Error("Evaluation conditions cannot change after round one");
+  }
   if (options.round === 1) {
     try {
       await stat(manifestPath);
@@ -85,7 +107,8 @@ export async function runRound(options: RunRoundOptions): Promise<EvaluationSumm
       }
     }
     await writeJson(manifestPath, {
-      schemaVersion: "1.0.0",
+      schemaVersion: "2.0.0",
+      mode,
       runId: options.runId,
       sourceRevision: SOURCE_REVISION,
       model: EXPECTED_MODEL,
@@ -100,8 +123,7 @@ export async function runRound(options: RunRoundOptions): Promise<EvaluationSumm
       retries: "none",
     });
   } else {
-    const manifest = await readJson<{ inputFingerprint: string }>(manifestPath);
-    if (manifest.inputFingerprint !== currentFingerprint) {
+    if (priorManifest?.inputFingerprint !== currentFingerprint) {
       throw new Error("Evaluation inputs changed after round one");
     }
     const checkpoint = await readJson<{ decision: string }>(
@@ -110,19 +132,14 @@ export async function runRound(options: RunRoundOptions): Promise<EvaluationSumm
     if (checkpoint.decision !== "continue") {
       throw new Error("Round-one checkpoint does not authorize continuation");
     }
-    if (options.round === 3) {
-      await requireResults(runRoot, 2);
-    }
+    await requireResults(runRoot, options.round - 1, mode);
   }
 
   const scorerPath = join(import.meta.dirname, "scoring.mts");
-  const roundItems = createSchedule(options.round).filter((item) => item.trial === options.round);
+  const roundItems = createConditionSchedule(options.round, mode).filter((item) => item.trial === options.round);
   for (const item of roundItems) {
     const sessionPath = join(
-      runRoot,
-      "sessions",
-      item.caseId,
-      `trial-${item.trial}`,
+      trialDirectory(runRoot, item.caseId, item.trial, item.condition),
       "session-artifact.json",
     );
     try {
@@ -139,6 +156,7 @@ export async function runRound(options: RunRoundOptions): Promise<EvaluationSumm
       runId: options.runId,
       caseId: item.caseId,
       trial: item.trial,
+      condition: item.condition,
       cliInvoker: options.cliInvoker,
       clock: options.clock,
     });
@@ -146,22 +164,23 @@ export async function runRound(options: RunRoundOptions): Promise<EvaluationSumm
       runRoot,
       caseId: item.caseId,
       trial: item.trial,
+      condition: item.condition,
       scorerPath,
     });
   }
 
-  const results = await readAllResults(runRoot);
+  const results = await readAllResults(runRoot, mode);
   let roundOneCheckpoint: EvaluationSummary["roundOneCheckpoint"];
   if (options.round === 1) {
     const firstRound = results.filter((result) => result.trial === 1);
-    roundOneCheckpoint = evaluateRoundOne(firstRound);
+    roundOneCheckpoint = evaluateRoundOne(firstRound, selectedConditions(mode));
     await writeJson(join(runRoot, "round-one-checkpoint.json"), {
-      schemaVersion: "1.0.0",
+      schemaVersion: "2.0.0",
       evaluatedAt: (options.clock ?? (() => new Date()))().toISOString(),
       ...roundOneCheckpoint,
       trialResultHashes: Object.fromEntries(
         firstRound.map((result) => [
-          result.caseId,
+          `${result.condition}/${result.caseId}`,
           result.hashes.resultSha256,
         ]),
       ),
@@ -173,19 +192,23 @@ export async function runRound(options: RunRoundOptions): Promise<EvaluationSumm
   }
 
   const summary: EvaluationSummary = {
-    schemaVersion: "1.0.0",
+    schemaVersion: "2.0.0",
+    mode,
     runId: options.runId,
     sourceRevision: SOURCE_REVISION,
     model: EXPECTED_MODEL,
     reasoningEffort: EXPECTED_REASONING_EFFORT,
     contextTier: EXPECTED_CONTEXT_TIER,
-    trialOrder: createSchedule(3),
+    trialOrder: createConditionSchedule(3, mode),
     trials: results,
     roundOneCheckpoint,
     limitations: [
       "The cases are controlled fault injections, not organic production incidents.",
       `${EVALUATION_CASE_IDS.length} selected cases and the scheduled sessions do not establish a general RCA accuracy rate.`,
       "Approvals are simulated evaluation fixtures and do not establish production authority.",
+      "Both conditions share a bounded host-directed evidence protocol; this measures skill lift under that protocol, not unrestricted autonomous RCA.",
+      "The baseline receives a minimal diagnostic output schema, not the skill workflow; skill-only gates are not applicable.",
+      "Set B service match is the shared primary diagnostic endpoint; Set A diagnosis claims can differ because skill claim-authority gates do not apply to the baseline.",
       "Diagnostic compatibility, unsupported claims, CR-16 satisfaction, and issue closure require human review.",
     ],
   };
@@ -219,16 +242,16 @@ async function assertPrepared(runRoot: string): Promise<{
   return { parquetReader: manifest.parquetReader };
 }
 
-async function requireResults(runRoot: string, trial: number): Promise<void> {
-  for (const caseId of EVALUATION_CASE_IDS) {
-    await stat(join(runRoot, "sessions", caseId, `trial-${trial}`, "trial-result.json"));
+async function requireResults(runRoot: string, trial: number, mode: EvaluationMode): Promise<void> {
+  for (const item of createConditionSchedule(trial, mode).filter((item) => item.trial === trial)) {
+    await stat(join(trialDirectory(runRoot, item.caseId, trial, item.condition), "trial-result.json"));
   }
 }
 
-async function readAllResults(runRoot: string): Promise<readonly TrialResult[]> {
+async function readAllResults(runRoot: string, mode: EvaluationMode): Promise<readonly TrialResult[]> {
   const results: TrialResult[] = [];
-  for (const item of createSchedule(3)) {
-    const path = join(runRoot, "sessions", item.caseId, `trial-${item.trial}`, "trial-result.json");
+  for (const item of createConditionSchedule(3, mode)) {
+    const path = join(trialDirectory(runRoot, item.caseId, item.trial, item.condition), "trial-result.json");
     try {
       results.push(await readJson<TrialResult>(path));
     } catch (error) {

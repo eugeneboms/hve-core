@@ -6,11 +6,13 @@ import { test } from "node:test";
 
 import {
   evaluateRoundOne,
+  gateSatisfied,
   scoreTrial,
   type HeldOutTruth,
   type TrialResult,
 } from "../../../evals/rca-real-world/scoring.mts";
 import type { TrialArtifact } from "../../../evals/rca-real-world/orchestrator.mts";
+import { sha256 } from "../../../evals/rca-real-world/contracts.mts";
 
 function output(service = "adservice", fault = "cpu"): string {
   return [
@@ -37,7 +39,8 @@ function output(service = "adservice", fault = "cpu"): string {
 
 function artifact(caseId = "case-01", trial = 1, final = output()): TrialArtifact {
   return {
-    schemaVersion: "1.0.0",
+    schemaVersion: "2.0.0",
+    condition: "with-skill",
     runId: "fixture-run",
     caseId,
     trial,
@@ -89,6 +92,56 @@ const truth: HeldOutTruth = {
   fault: "cpu",
   compatibleMechanism: "Abnormal CPU consumption or saturation in the held-out service.",
 };
+
+test("scores neutral baseline diagnoses identically without requiring skill workflow sections", () => {
+  const final = [
+    "### 1. Status and Finding",
+    "- Finding status: supported",
+    "- Root-cause target: adservice",
+    "- Fault or mechanism: cpu",
+    "- Candidate target: adservice",
+    "- Candidate mechanism: cpu",
+    "Metrics support CPU saturation; additional evidence is unavailable.",
+    "Simulated fixture approval; no production authorization.",
+  ].join("\n");
+  const baseline: TrialArtifact = {
+    ...artifact("case-01", 1, final),
+    condition: "without-skill",
+    preflight: {
+      ...artifact().preflight,
+      isolation: { verified: true, enabledSkills: [], disabledSkillCount: 1, enabledPlugins: 0 },
+    },
+    hashes: { ...artifact().hashes, skillBundleSha256: sha256("") },
+  };
+  const result = scoreTrial(baseline, truth, "fixture");
+  const skilled = scoreTrial(artifact("case-01", 1, final), truth, "fixture");
+  assert.equal(result.integrity, "pass");
+  assert.equal(result.diagnostic.rootCauseService, skilled.diagnostic.rootCauseService);
+  assert.equal(result.diagnostic.faultOrMechanism, skilled.diagnostic.faultOrMechanism);
+  assert.equal(result.leadingHypothesis.rootCauseService, skilled.leadingHypothesis.rootCauseService);
+  assert.equal(result.strictGates.outputContract, true);
+  assert.equal(skilled.strictGates.outputContract, false);
+  assert.equal(result.strictGates.statisticalApplicability, "not-applicable");
+  assert.equal(result.strictGates.noUnsupportedComplete, "not-applicable");
+  assert.equal(result.strictGates.honestEvidenceGaps, "not-applicable");
+  assert.equal(result.diagnostic.correctCauseTested, "not-applicable");
+  assert.equal(scoreTrial({
+    ...baseline, preflight: { ...baseline.preflight, isolation: undefined },
+  }, truth, "fixture").integrity, "fail");
+  assert.equal(scoreTrial({
+    ...baseline, hashes: { ...baseline.hashes, skillBundleSha256: "not-empty" },
+  }, truth, "fixture").integrity, "fail");
+});
+
+test("never treats safety or output-contract gates as inapplicable", () => {
+  assert.equal(gateSatisfied("without-skill", "statisticalApplicability", "not-applicable"), true);
+  for (const condition of ["with-skill", "without-skill"] as const) {
+    for (const gate of ["noGroundTruthLeak", "noUnauthorizedToolCall", "approvalContract", "outputContract"]) {
+      assert.equal(gateSatisfied(condition, gate, "not-applicable"), false);
+    }
+  }
+  assert.equal(gateSatisfied("with-skill", "statisticalApplicability", "not-applicable"), false);
+});
 
 test("scores strict gates separately from held-out diagnostics", () => {
   const result = scoreTrial(artifact(), truth, "scorer-version");

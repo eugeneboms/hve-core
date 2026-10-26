@@ -6,11 +6,12 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 import {
-  EVALUATION_RUN_DIRECTORY, createSchedule, readJson, sha256, stableJson, writeJson,
+  EVALUATION_RUN_DIRECTORY, readJson, sha256, stableJson, writeJson,
 } from "./contracts.mts";
 import type { TrialArtifact } from "./orchestrator.mts";
 import { redactArtifact } from "./redaction.mts";
 import { scorePersistedTrial, type TrialResult } from "./scoring.mts";
+import { createConditionSchedule, parseEvaluationMode, trialDirectory } from "./conditions.mts";
 
 /** Redacts persisted session artifacts and recomputes every dependent hash and score. */
 export async function sanitizeRun(repositoryRoot: string, runId: string): Promise<{
@@ -28,9 +29,15 @@ export async function sanitizeRun(repositoryRoot: string, runId: string): Promis
   const results: TrialResult[] = [];
   let sessions = 0;
   let replacements = 0;
+  const summaryPath = join(runRoot, "evaluation-summary.json");
+  const summary = await readJson<Record<string, unknown>>(summaryPath);
+  if (typeof summary.mode !== "string") {
+    throw new Error("Sanitization requires a condition-aware evaluation summary");
+  }
+  const mode = parseEvaluationMode(summary.mode);
 
-  for (const item of createSchedule(3)) {
-    const sessionRoot = join(runRoot, "sessions", item.caseId, `trial-${item.trial}`);
+  for (const item of createConditionSchedule(3, mode)) {
+    const sessionRoot = trialDirectory(runRoot, item.caseId, item.trial, item.condition);
     let artifact: TrialArtifact;
     try {
       artifact = await readJson<TrialArtifact>(join(sessionRoot, "session-artifact.json"));
@@ -66,6 +73,7 @@ export async function sanitizeRun(repositoryRoot: string, runId: string): Promis
         runRoot,
         caseId: item.caseId,
         trial: item.trial,
+        condition: item.condition,
         scorerPath,
       }),
     );
@@ -73,8 +81,6 @@ export async function sanitizeRun(repositoryRoot: string, runId: string): Promis
     replacements += redacted.replacements;
   }
 
-  const summaryPath = join(runRoot, "evaluation-summary.json");
-  const summary = await readJson<Record<string, unknown>>(summaryPath);
   await writeJson(summaryPath, { ...summary, trials: results });
 
   const checkpointPath = join(runRoot, "round-one-checkpoint.json");
@@ -84,7 +90,7 @@ export async function sanitizeRun(repositoryRoot: string, runId: string): Promis
     trialResultHashes: Object.fromEntries(
       results
         .filter((result) => result.trial === 1)
-        .map((result) => [result.caseId, result.hashes.resultSha256]),
+        .map((result) => [`${result.condition}/${result.caseId}`, result.hashes.resultSha256]),
     ),
   });
   return { sessions, replacements };

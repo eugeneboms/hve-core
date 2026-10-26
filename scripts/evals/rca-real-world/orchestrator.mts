@@ -26,6 +26,8 @@ import {
   type ToolDefinition,
 } from "./evidence-tools.mts";
 import { redactArtifact } from "./redaction.mts";
+import { RCA_SKILL_NAMES, trialDirectory, type EvaluationCondition } from "./conditions.mts";
+import type { CliIsolation } from "./cli-isolation.mts";
 
 export interface ModelInfo {
   readonly id: string;
@@ -61,7 +63,8 @@ export interface SessionCreationConfig {
 }
 
 export interface TrialArtifact {
-  readonly schemaVersion: "1.0.0";
+  readonly schemaVersion: "2.0.0";
+  readonly condition: EvaluationCondition;
   readonly runId: string;
   readonly caseId: string;
   readonly trial: number;
@@ -74,6 +77,7 @@ export interface TrialArtifact {
     readonly modelAvailable: boolean;
     readonly reasoningEffortAvailable: boolean;
     readonly clientStatus: unknown;
+    readonly isolation?: CliIsolation;
   };
   readonly firstResponse?: string;
   readonly finalResponse?: string;
@@ -129,10 +133,7 @@ export async function runTrial(options: RunTrialOptions): Promise<TrialArtifact>
     throw new Error("Trial must use a configured neutral case ID and trial 1 through 3");
   }
   const clock = options.clock ?? (() => new Date());
-  const sessionRoot = resolveInside(
-    options.runRoot,
-    `sessions/${options.caseId}/trial-${options.trial}`,
-  );
+  const sessionRoot = trialDirectory(options.runRoot, options.caseId, options.trial, "with-skill");
   await mkdir(sessionRoot, { recursive: true });
   const workspace = await mkdtemp(join(tmpdir(), `rca-eval-${options.caseId}-${options.trial}-`));
   const events: unknown[] = [];
@@ -233,7 +234,8 @@ export async function runTrial(options: RunTrialOptions): Promise<TrialArtifact>
   }
 
   const rawArtifact = {
-    schemaVersion: "1.0.0" as const,
+    schemaVersion: "2.0.0" as const,
+    condition: "with-skill" as const,
     runId: options.runId,
     caseId: options.caseId,
     trial: options.trial,
@@ -271,13 +273,9 @@ export async function runTrial(options: RunTrialOptions): Promise<TrialArtifact>
 /** Copies the exact RCA skill package into an isolated workspace and returns its prompt bundle. */
 export async function stageSkills(repositoryRoot: string, workspace: string): Promise<string> {
   const sourceRoot = join(repositoryRoot, ".github", "skills", "root-cause-analysis");
-  const targetRoot = join(workspace, "skills");
+  const targetRoot = join(workspace, ".github", "skills");
   await mkdir(targetRoot, { recursive: true });
-  for (const skillName of [
-    "root-cause-analysis",
-    "causal-evidence-likelihood",
-    "statistical-hypothesis-testing",
-  ]) {
+  for (const skillName of RCA_SKILL_NAMES) {
     await cp(join(sourceRoot, skillName), join(targetRoot, skillName), { recursive: true });
   }
   const skillFiles = [
@@ -295,7 +293,11 @@ export async function stageSkills(repositoryRoot: string, workspace: string): Pr
 }
 
 /** Builds the first generic-mode turn, including the exact approval-envelope contract. */
-export function buildInitialPrompt(caseId: string, now: Date): string {
+export function buildInitialPrompt(
+  caseId: string,
+  now: Date,
+  condition: EvaluationCondition = "with-skill",
+): string {
   const expiry = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
   const requestedCalls = [
     {
@@ -306,7 +308,9 @@ export function buildInitialPrompt(caseId: string, now: Date): string {
     },
   ];
   return [
-    `Investigate neutral incident ${caseId} using the root-cause-analysis skill in generic mode.`,
+    condition === "with-skill"
+      ? `Investigate neutral incident ${caseId} using the root-cause-analysis skill in generic mode.`
+      : `Investigate neutral incident ${caseId} without skills or custom agents. Use your own analysis.`,
     "The incident context and evidence are available only through the custom read-only tools.",
     "The first approval cycle permits only this scope-discovery call:",
     requestedCalls

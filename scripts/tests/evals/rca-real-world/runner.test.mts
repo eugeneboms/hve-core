@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
@@ -15,6 +15,8 @@ import {
   stableJson,
 } from "../../../evals/rca-real-world/contracts.mts";
 import { createInputFingerprint, runRound } from "../../../evals/rca-real-world/runner.mts";
+import { trialDirectory } from "../../../evals/rca-real-world/conditions.mts";
+import { fixtureInventory } from "./cli-fixture.mts";
 
 test("fingerprints input paths in code-unit order", async (context) => {
   const root = await mkdtemp(join(tmpdir(), "rca-fingerprint-"));
@@ -162,15 +164,23 @@ test("rejects changed metric identities before invoking the model", async (conte
 });
 
 function fakeCliInvoker(): CliInvoker {
-  return async (args) => {
+  return async (args, options) => {
+    const inventory = await fixtureInventory(args, options);
+    if (inventory) {
+      return inventory;
+    }
     if (args.includes("--version")) {
       return result("GitHub Copilot CLI 1.0.101-0\n");
     }
     assert.equal(args.includes("--attachment"), false);
-    assert.equal(args.includes("--no-custom-instructions"), false);
+    assert.equal(args.includes("--no-custom-instructions"), true);
     assert.equal(args.includes("--available-tools"), true);
+    assert.equal(options.env?.COPILOT_HOME, join(options.cwd, ".isolated-home", ".copilot"));
     const promptIndex = args.indexOf("-p");
     const prompt = promptIndex >= 0 ? args[promptIndex + 1] ?? "" : "";
+    if (!(await readdir(options.cwd)).includes(".github")) {
+      assert.doesNotMatch(prompt, /root-cause-analysis|causal-evidence-likelihood|statistical-hypothesis-testing|required eight|completion gate|accountable human sign-off/i);
+    }
     const caseId = /case-0[1-5]/.exec(prompt)?.[0];
     if (!caseId) {
       throw new Error("Missing case in CLI prompt");
@@ -202,7 +212,17 @@ function fakeCliInvoker(): CliInvoker {
     return result(
       `${JSON.stringify({
         type: "assistant.message",
-        data: { content: finalOutput(serviceByCase[caseId]!, faultByCase[caseId]!) },
+        data: { content: prompt.includes("Solve the incident using your own analysis")
+          ? [
+            "### 1. Status and Finding",
+            "- Finding status: supported",
+            `- Root-cause target: ${serviceByCase[caseId]}`,
+            `- Fault or mechanism: ${faultByCase[caseId]}`,
+            `- Candidate target: ${serviceByCase[caseId]}`,
+            `- Candidate mechanism: ${faultByCase[caseId]}`,
+            "Simulated fixture approval; no production authorization.",
+          ].join("\n")
+          : finalOutput(serviceByCase[caseId]!, faultByCase[caseId]!) },
       })}\n`,
     );
   };
@@ -357,8 +377,9 @@ function finalOutput(service: string, fault: string): string {
   ].join("\n\n");
 }
 
-test("runs exactly five first-round sessions and records a continue checkpoint", async () => {
+test("defaults to ten isolated first-round sessions and records condition-specific hashes", async (context) => {
   const root = await preparedRun();
+  context.after(() => rm(root, { recursive: true, force: true }));
   const summary = await runRound({
     repositoryRoot: resolve("."),
     runRoot: root,
@@ -367,31 +388,62 @@ test("runs exactly five first-round sessions and records a continue checkpoint",
     cliInvoker: fakeCliInvoker(),
     clock: () => NOW,
   });
-  assert.equal(summary.trials.length, 5);
+  assert.equal(summary.mode, "both");
+  assert.equal(summary.trials.length, 10);
   assert.deepEqual(
-    summary.trials.map((result) => `${result.caseId}:${result.trial}`),
-    ["case-01:1", "case-02:1", "case-03:1", "case-04:1", "case-05:1"],
+    summary.trials.slice(0, 4).map((result) => `${result.caseId}:${result.condition}`),
+    ["case-01:with-skill", "case-01:without-skill", "case-02:without-skill", "case-02:with-skill"],
   );
   assert.equal(summary.roundOneCheckpoint?.decision, "continue");
-  for (const caseId of Object.keys(serviceByCase)) {
+  const sessionIds = new Set<string>();
+  for (const { caseId, condition } of summary.trials) {
     const artifact = JSON.parse(
-      await readFile(join(root, "sessions", caseId, "trial-1", "session-artifact.json"), "utf8"),
+      await readFile(join(trialDirectory(root, caseId, 1, condition), "session-artifact.json"), "utf8"),
     ) as {
       cliCapture: { third?: unknown; fourth?: unknown };
       evidenceToolTraces: readonly unknown[];
       approvalLedger: { records: readonly { status: string }[] };
+      condition: string;
+      preflight: { isolation: { enabledSkills: readonly string[] }; clientStatus: { sessionId: string } };
+      hashes: { skillBundleSha256: string };
     };
     const expectedCalls = caseId === "case-01" ? 3 : caseId === "case-04" ? 4 : 5;
     assert.ok(artifact.cliCapture.third);
     assert.ok(artifact.cliCapture.fourth);
     assert.equal(artifact.evidenceToolTraces.length, expectedCalls);
     assert.ok(artifact.approvalLedger.records.every((record) => record.status === "Consumed"));
+    assert.equal(artifact.condition, condition);
+    assert.equal(artifact.preflight.isolation.enabledSkills.length, condition === "with-skill" ? 3 : 0);
+    assert.equal(artifact.hashes.skillBundleSha256 === sha256(""), condition === "without-skill");
+    sessionIds.add(artifact.preflight.clientStatus.sessionId);
   }
-  assert.doesNotReject(() => readFile(join(root, "round-one-checkpoint.json"), "utf8"));
+  assert.equal(sessionIds.size, 10);
+  const checkpoint = JSON.parse(await readFile(join(root, "round-one-checkpoint.json"), "utf8"));
+  assert.equal(Object.keys(checkpoint.trialResultHashes).length, 10);
+  assert.ok(checkpoint.trialResultHashes["with-skill/case-01"]);
+  assert.ok(checkpoint.trialResultHashes["without-skill/case-01"]);
 });
 
-test("does not start round two when the round-one checkpoint pauses", async () => {
+test("does not continue either condition when a prior paired result is missing", async (context) => {
   const root = await preparedRun();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const base = {
+    repositoryRoot: resolve("."), runRoot: root, runId: "missing-pair",
+    cliInvoker: fakeCliInvoker(), clock: () => NOW,
+  };
+  await runRound({ ...base, round: 1 });
+  await rm(join(trialDirectory(root, "case-01", 1, "without-skill"), "trial-result.json"));
+  let invocations = 0;
+  await assert.rejects(runRound({
+    ...base, round: 2,
+    cliInvoker: async () => { invocations += 1; throw new Error("Must not invoke"); },
+  }), { code: "ENOENT" });
+  assert.equal(invocations, 0);
+});
+
+test("does not start round two when the round-one checkpoint pauses", async (context) => {
+  const root = await preparedRun();
+  context.after(() => rm(root, { recursive: true, force: true }));
   await runRound({
     repositoryRoot: resolve("."),
     runRoot: root,
@@ -418,8 +470,9 @@ test("does not start round two when the round-one checkpoint pauses", async () =
   );
 });
 
-test("runs rounds two and three only after unchanged input and prerequisites", async () => {
+test("runs rounds two and three only after unchanged input and prerequisites", async (context) => {
   const root = await preparedRun();
+  context.after(() => rm(root, { recursive: true, force: true }));
   const base = {
     repositoryRoot: resolve("."),
     runRoot: root,
@@ -430,15 +483,38 @@ test("runs rounds two and three only after unchanged input and prerequisites", a
   await runRound({ ...base, round: 1 });
   await runRound({ ...base, round: 2 });
   const summary = await runRound({ ...base, round: 3 });
-  assert.equal(summary.trials.length, 15);
+  assert.equal(summary.trials.length, 30);
   assert.deepEqual(
     summary.trials.map((result) => result.trial),
-    [1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3],
+    [...Array<number>(10).fill(1), ...Array<number>(10).fill(2), ...Array<number>(10).fill(3)],
   );
 });
 
-test("never replaces an existing trial", async () => {
+for (const mode of ["with-skill", "without-skill"] as const) {
+  test(`runs only ${mode} when selected and freezes the selection on resume`, async (context) => {
+    const root = await preparedRun();
+    context.after(() => rm(root, { recursive: true, force: true }));
+    const base = {
+      repositoryRoot: resolve("."), runRoot: root, runId: `single-${mode}`,
+      cliInvoker: fakeCliInvoker(), clock: () => NOW,
+    };
+    const first = await runRound({ ...base, round: 1, mode });
+    assert.equal(first.trials.length, 5);
+    assert.ok(first.trials.every((trial) => trial.condition === mode));
+    await assert.rejects(
+      runRound({ ...base, round: 2, mode: "both" }),
+      /conditions cannot change/,
+    );
+    const second = await runRound({ ...base, round: 2 });
+    assert.equal(second.mode, mode);
+    assert.equal(second.trials.length, 10);
+    assert.ok(second.trials.every((trial) => trial.condition === mode));
+  });
+}
+
+test("never replaces an existing trial", async (context) => {
   const root = await preparedRun();
+  context.after(() => rm(root, { recursive: true, force: true }));
   const options = {
     repositoryRoot: resolve("."),
     runRoot: root,

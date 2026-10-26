@@ -6,7 +6,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 
 export const CASE_SCHEMA_VERSION = "1.0.0";
-export const RESULT_SCHEMA_VERSION = "1.0.0";
+export const RESULT_SCHEMA_VERSION = "2.0.0";
 export const TRANSFORMATION_VERSION = "2.0.0";
 export const EVALUATION_RUN_DIRECTORY = "rcaeval-three-case";
 export const EXPECTED_MODEL = "gpt-5.6-sol";

@@ -1,6 +1,6 @@
 ---
 title: RCAEval real-world RCA evaluation
-description: Run five blinded RCAEval cases through the root-cause-analysis skill with bounded evidence tools
+description: Compare skilled and skill-free RCA on five blinded RCAEval cases with bounded evidence tools
 author: HVE Core Team
 ms.date: 2026-10-26
 ms.topic: reference
@@ -12,10 +12,11 @@ keywords:
   - blinded testing
 ---
 
-This evaluation exercises the root-cause-analysis skill against five controlled RCAEval
-fault-injection cases. It measures workflow conformance separately from held-out diagnostic
-results. The selected cases do not represent organic production incidents or a statistically
-representative benchmark.
+This evaluation compares the root-cause-analysis skill with a skill-free baseline on five
+controlled RCAEval fault-injection cases. Both conditions run by default, using the same model
+profile, cases, evidence-tool contracts, turn limits, timeouts, and credit limits. Workflow
+conformance is measured separately from held-out diagnostic results. The selected cases do not
+represent organic production incidents or a statistically representative benchmark.
 
 ## Field investigations versus evaluation trials
 
@@ -70,16 +71,33 @@ The preparation command creates two separate roots:
 * `model-visible/` contains neutrally named incident metadata and deterministic evidence stores.
 * `scorer-only/` contains source provenance, hashes, and held-out service and fault labels.
 
-Model sessions run from isolated temporary workspaces that receive the packaged RCA skills and
-one neutral case context. They cannot access the repository, the case contract, source paths,
+Each condition runs in a fresh temporary workspace and independent model session. Only the
+`with-skill` condition receives the three packaged RCA skills. The `without-skill` condition
+receives no skill bundle, no custom agent, and no RCA reasoning procedure. Both receive one
+neutral case context. They cannot access the repository, the case contract, source paths,
 other cases, prior model output, or scorer-only files. Genuine service names remain in telemetry
 because they are evidence; packaging metadata never identifies one as the expected answer.
+
+The CLI uses a private home and configuration for every session. The host disables hooks and IDE
+autoconnection, suppresses custom instruction loading, disables built-in MCP servers, and exposes
+no model-callable tools. Evidence calls are instead validated and executed by the host. Inherited
+skills can still be discovered from a temporary directory's ancestors: the harness enumerates
+them, disables all except the exact staged RCA package in private settings, then verifies the
+enabled skill and plugin inventories. The baseline must have zero enabled skills and plugins.
+Unsupported inventory commands, malformed responses, or unexpected enabled capabilities fail
+closed before inference. No user configuration is changed or copied into the workspace.
+
+This establishes no runtime skill access, not absence of skill-related material in model training.
+The skilled bundle is supplied explicitly in the initial prompt; inherited custom instructions
+are suppressed for both conditions.
 
 ## Prerequisites
 
 * Node.js 24 and dependencies restored with `npm ci`
 * Network access to the pinned Hugging Face revision for preparation
-* GitHub Copilot authentication available to the Copilot SDK and CLI
+* Copilot CLI supporting `skill list --json`, `plugin list --json`, and the enforced isolation flags
+* GitHub Copilot authentication available through an environment token or credential provider
+  that works with a fresh CLI home; the harness does not copy stored login files
 * Exact `gpt-5.6-sol` model identity with `medium` reasoning effort and the `default` context tier
 * A human reviewer for diagnostic compatibility and final CR-16 assessment
 
@@ -97,6 +115,50 @@ npm run ci:rca-eval -- --run-id <run-id> --round 1
 The model-backed command is CI-owned because it uses external data, credentials, and model budget.
 The report command defaults to today's UTC date; use `--date YYYY-MM-DD` to specify another date.
 
+## Condition selection and scoring
+
+Noninteractive execution defaults to both conditions. In a terminal, a new run asks whether to
+run both (the default), only `with-skill`, or only `without-skill`. Use `--interactive` to require
+terminal selection, or specify `--conditions` to choose explicitly without prompting:
+
+```powershell
+npm run ci:rca-eval -- --run-id <run-id> --round 1 --conditions both
+npm run ci:rca-eval -- --run-id <run-id> --round 1 --conditions with-skill
+npm run ci:rca-eval -- --run-id <run-id> --round 1 --conditions without-skill
+```
+
+The selection is recorded in the immutable run manifest. Later rounds reuse it without asking;
+an explicit conflicting selection is rejected before any session starts. Condition order
+alternates across cases and rounds. Schema version `2.0.0` requires a new run ID; do not resume
+or rescore historical single-condition artifacts with the new session layout.
+
+The baseline receives only a neutral correctness-compatible answer format: supported service
+and mechanism, a separate weaker candidate service and mechanism, finding status, and free-form
+evidence and limitations. Both conditions use the same held-out service and mechanism extraction
+for supported diagnoses (Set A) and leading candidates (Set B). The baseline is not required to
+produce the skill's eight sections, hypothesis ledger, completion gate, statistical-companion
+phrasing, or human-sign-off workflow. Skill-only gates are recorded as `not-applicable`, not
+failed or passed; safety, fixture-approval, integrity, and the condition's output-format checks
+still apply.
+
+Set B service match is the primary shared diagnostic endpoint: it compares the model's best
+candidate without requiring skill completion. Set A also reflects how readily each condition
+asserts an evidence-supported diagnosis. The skill's claim-authority gates can constrain that
+assertion, so Set A alone is not a like-for-like measure of diagnostic ability. Mechanism scores
+remain in each trial result; compatibility and unsupported claims require human adjudication.
+
+Reports separate sessions, failures, outcomes, and costs by condition. Matched comparisons use
+the same case and trial, exclude pairs with an incomplete or integrity-failed session, and show
+the exclusion count. They report skill-only and baseline-only matches and the observed
+percentage-point difference. Unassessed diagnoses and abstentions are not matches. A
+single-condition run cannot produce a skill-lift estimate.
+
+The experiment measures incremental value within the existing host-directed, bounded evidence
+protocol, not unconstrained autonomous RCA. Both conditions receive the same broad evidence
+batches and can choose their focused queries independently; those queries can return different
+evidence. No additional evaluation or significance claim follows from five selected cases.
+The historical committed evidence predates this paired protocol and is not a baseline comparison.
+
 ## Trial cadence and checkpoint
 
 Before starting an evaluation, the coordinating person or agent must ask:
@@ -107,18 +169,20 @@ Before starting an evaluation, the coordinating person or agent must ask:
 Record the user's choice in the evaluation run notes before execution. Do not infer permission
 to run all three rounds from a missing response.
 
-* If the user chooses a pause, run the five trial-1 sessions, present their results, and wait for
+* If the user chooses a pause, run the selected trial-1 sessions, present their results, and wait for
   explicit approval before starting any trial-2 or trial-3 session.
 * If the user chooses all three rounds, run rounds 1, 2, and 3 in order without asking again at
   the round-one review checkpoint, provided the automated continuation checks pass.
 
-Each round contains one isolated trial per case:
+Each round contains one isolated trial per case and selected condition. The default paired run
+has 10 sessions per round and 30 across all three rounds; selecting one condition gives 5 and 15,
+respectively. Pairing therefore doubles the scheduled model sessions and budget exposure.
 
 ```text
-round 1: case-01 trial 1, case-02 trial 1, case-03 trial 1, case-04 trial 1, case-05 trial 1
+round 1: case-01 trial 1 in both conditions, then case-02 through case-05 in both
 automated checkpoint; human review and approval only if the user chose a pause
-round 2: case-01 trial 2, case-02 trial 2, case-03 trial 2, case-04 trial 2, case-05 trial 2
-round 3: case-01 trial 3, case-02 trial 3, case-03 trial 3, case-04 trial 3, case-05 trial 3
+round 2: case-01 through case-05, trial 2 in both conditions
+round 3: case-01 through case-05, trial 3 in both conditions
 ```
 
 The CLI executes one round per invocation using `--round 1`, `--round 2`, or `--round 3`.
@@ -128,7 +192,7 @@ rounds only when the selected cadence permits them.
 
 The checkpoint's automatically computed `decision` reports whether machine checks permit
 continuation, not whether a human reviewed or approved the results. A `pause` decision blocks
-later rounds in either cadence. A `continue` decision does not replace human approval when the
+later rounds for both conditions in either cadence. A `continue` decision does not replace human approval when the
 user requested the review pause. A failed session remains a result and is never retried
 automatically. Diagnostic compatibility, unsupported claims, and final CR-16 assessment still
 require human review even when all three rounds were authorized upfront.
@@ -139,6 +203,8 @@ Raw inputs, transcripts, tool traces, approvals, scores, and manifests are writt
 
 ```text
 .copilot-tracking/evaluations/rcaeval-three-case/<run-id>/
+  sessions/with-skill/<case-id>/trial-<n>/
+  sessions/without-skill/<case-id>/trial-<n>/
 ```
 
 The committed `PR-3136-EVIDENCE.md` report contains only sanitized outcomes, immutable input and
@@ -159,9 +225,10 @@ those historical artifacts still need review before sharing.
 * RCAEval uses controlled fault injection on microservice testbeds.
 * Fixture approvals test generic-mode approval-protocol behavior. They do not establish live
   production authorization or authenticated human approval.
-* Repeated time points from one injected incident are dependent observations. The statistical
-  companion must report the independent-unit test as not applicable or blocked rather than
-  inventing a p-value.
+* Repeated time points from one injected incident are dependent observations. In the skilled
+  condition, the statistical companion must report the independent-unit test as not applicable
+  or blocked rather than inventing a p-value. Baseline unsupported statistical claims remain
+  subject to human review, not a skill-specific wording test.
 * Diagnostic compatibility, unsupported claims, CR-16 satisfaction, and issue closure remain
   human decisions.
 
