@@ -2,7 +2,7 @@
 title: RCAEval real-world RCA evaluation
 description: Compare skilled and skill-free RCA on five blinded RCAEval cases with bounded evidence tools
 author: HVE Core Team
-ms.date: 2026-10-26
+ms.date: 2026-10-27
 ms.topic: reference
 keywords:
   - root cause analysis
@@ -112,7 +112,14 @@ npm run test:rca-eval
 npm run ci:rca-eval -- --run-id <run-id> --round 1
 ```
 
+PR validation runs `npm run test:rca-eval` in the required `RCA Harness Tests` job on every
+workflow run, without path filtering. These deterministic tests use fixtures and simulated
+responses with Node's built-in test runner; they require no dependency installation, model
+credentials, external dataset download, or inference budget.
+
 The model-backed command is CI-owned because it uses external data, credentials, and model budget.
+It is not invoked by PR validation or another workflow. Run it separately only after confirming
+the evaluation scope, budget, and trial cadence.
 The report command defaults to today's UTC date; use `--date YYYY-MM-DD` to specify another date.
 
 ## Condition selection and scoring
