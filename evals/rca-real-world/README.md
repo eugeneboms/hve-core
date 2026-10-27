@@ -12,6 +12,8 @@ keywords:
   - blinded testing
 ---
 
+<!-- cspell:ignore diskio -->
+
 This evaluation compares the root-cause-analysis skill with a skill-free baseline on five
 controlled RCAEval fault-injection cases. Both conditions run by default, using the same model
 profile, cases, evidence-tool contracts, turn limits, timeouts, and credit limits. Workflow
