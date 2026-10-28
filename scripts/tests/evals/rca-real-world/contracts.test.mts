@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import assert from "node:assert/strict";
+import { join, resolve } from "node:path";
 import { test } from "node:test";
 
 import {
@@ -160,8 +161,15 @@ test("creates the approved round-robin schedule", () => {
 });
 
 test("rejects output-root escape", () => {
-  assert.throws(() => resolveInside("C:\\safe", "..\\outside"), /allowed root/);
-  assert.throws(() => resolveInside("C:\\safe", "."), /allowed root/);
+  const root = resolve("safe");
+  assert.throws(() => resolveInside(root, join("..", "outside")), /allowed root/);
+  assert.throws(() => resolveInside(root, "."), /allowed root/);
+});
+
+test("resolves a child below the output root", () => {
+  const root = resolve("safe");
+  const child = join("sessions", "trial-1");
+  assert.equal(resolveInside(root, child), join(root, child));
 });
 
 test("serializes equivalent objects deterministically", () => {
