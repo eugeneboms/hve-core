@@ -4,12 +4,17 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 
-import { EVALUATION_RUN_DIRECTORY, readJson, writeJson } from "./contracts.mts";
+import {
+  EVALUATION_PROTOCOL, EVALUATION_RUN_DIRECTORY, evaluationModel, parseEvaluationProfile,
+  readJson, writeJson, type EvaluationProfile,
+} from "./contracts.mts";
 import type { EvaluationSummary } from "./runner.mts";
 import { selectedConditions, trialDirectory, type EvaluationCondition } from "./conditions.mts";
 import { gateSatisfied } from "./scoring.mts";
 
 interface RunManifest {
+  readonly protocol: string;
+  readonly profile: EvaluationProfile;
   readonly repositoryCommit: string;
   readonly sourceRevision: string;
   readonly model: string;
@@ -82,8 +87,9 @@ export async function scanArtifacts(root: string): Promise<readonly ArtifactScan
 }
 
 /**
- * Produces machine-grounded review, committed evidence, and PR-update drafts.
+ * Produces machine-grounded review, evidence, and update drafts.
  *
+ * Debug outputs stay under the run root and never replace production-facing evidence or drafts.
  * Human judgments remain pending and all human review checkboxes remain unchecked.
  */
 export async function generateEvidenceReport(options: {
@@ -100,6 +106,33 @@ export async function generateEvidenceReport(options: {
     throw new Error("Report generation requires condition-aware schema 2.0.0; start a new evaluation run");
   }
   const manifest = await readJson<RunManifest>(join(options.runRoot, "run-manifest.json"));
+  const profile = parseEvaluationProfile(summary.profile);
+  if (
+    summary.protocol !== EVALUATION_PROTOCOL || manifest.protocol !== summary.protocol ||
+    manifest.profile !== profile || summary.model !== evaluationModel(profile) ||
+    manifest.model !== summary.model || manifest.reasoningEffort !== summary.reasoningEffort ||
+    manifest.contextTier !== summary.contextTier ||
+    summary.trials.some((trial) =>
+      trial.protocol !== summary.protocol || trial.profile !== profile ||
+      trial.model !== summary.model || trial.reasoningEffort !== summary.reasoningEffort ||
+      trial.contextTier !== summary.contextTier
+    )
+  ) {
+    throw new Error(`Cannot report mixed or historical profiles, models, or protocols; ${EVALUATION_PROTOCOL} provenance must match`);
+  }
+  if (summary.trials.some((trial) =>
+    !["candidate", "abstained", "blocked", "protocol-error", "execution-error"].includes(trial.outcome) ||
+    (trial.integrity === "pass"
+      ? ["protocol-error", "execution-error"].includes(trial.outcome) || trial.leadingHypothesis?.status === "unusable"
+      : !["protocol-error", "execution-error"].includes(trial.outcome)) ||
+    !trial.leadingHypothesis || !trial.diagnostic ||
+    (trial.outcome === "candidate" && trial.leadingHypothesis.status !== "candidate") ||
+    (["abstained", "blocked"].includes(trial.outcome) && trial.leadingHypothesis.status !== "abstained") ||
+    (["protocol-error", "execution-error"].includes(trial.outcome) &&
+      (!trial.errorCode || trial.leadingHypothesis.status !== "unusable"))
+  )) {
+    throw new Error("Cannot report missing or inconsistent structured trial outcomes; do not rescore historical results");
+  }
   const commands = await readJson<{ commands: readonly CommandRecord[] }>(
     join(options.runRoot, "commands.json"),
   );
@@ -123,7 +156,8 @@ export async function generateEvidenceReport(options: {
     );
   }
 
-  const reviewRoot = join(
+  const debug = summary.profile === "debug";
+  const reviewRoot = debug ? options.runRoot : join(
     options.repositoryRoot,
     ".copilot-tracking",
     "reviews",
@@ -131,14 +165,14 @@ export async function generateEvidenceReport(options: {
     options.reviewDate,
   );
   await mkdir(reviewRoot, { recursive: true });
-  const reviewPath = join(reviewRoot, `${EVALUATION_RUN_DIRECTORY}-review.md`);
+  const reviewPath = join(reviewRoot, debug ? "DEBUG-REVIEW.md" : `${EVALUATION_RUN_DIRECTORY}-review.md`);
   await writeFile(
     reviewPath,
     renderReview(summary, manifest, commands.commands, adjudications),
     "utf8",
   );
 
-  const committedReportPath = join(
+  const committedReportPath = debug ? join(options.runRoot, "DEBUG-EVIDENCE.md") : join(
     options.repositoryRoot,
     "evals",
     "rca-real-world",
@@ -158,7 +192,7 @@ export async function generateEvidenceReport(options: {
     "utf8",
   );
 
-  const prUpdatePath = join(options.runRoot, "PR-3136-UPDATE.md");
+  const prUpdatePath = join(options.runRoot, debug ? "DEBUG-UPDATE.md" : "PR-3136-UPDATE.md");
   await writeFile(prUpdatePath, renderPrUpdate(summary, commands.commands), "utf8");
   return { committedReportPath, reviewPath, prUpdatePath };
 }
@@ -178,13 +212,13 @@ function renderCommittedReport(
     effectiveStrictPass(trial, adjudications),
   ).length;
   const serviceMatches = summary.trials.filter(
-    (trial) => trial.diagnostic.rootCauseService === "match",
+    (trial) => trial.integrity === "pass" && trial.diagnostic.rootCauseService === "match",
   ).length;
   const leadingMatches = summary.trials.filter(
-    (trial) => trial.leadingHypothesis?.rootCauseService === "match",
+    (trial) => trial.integrity === "pass" && trial.leadingHypothesis?.rootCauseService === "match",
   ).length;
   const leadingAbstentions = summary.trials.filter(
-    (trial) => trial.leadingHypothesis?.status === "abstained",
+    (trial) => trial.integrity === "pass" && trial.leadingHypothesis?.status === "abstained",
   ).length;
   const selectedCosts = selectedConditions(summary.mode).map((condition) => costs[condition]);
   const authoritativeCost = selectedCosts.some((cost) => cost === null)
@@ -199,15 +233,18 @@ ms.date: ${reportDate}
 
 # PR 3136 RCAEval evaluation evidence
 
+${profileNotice(summary)}
+
 ## Scope
 
 This run evaluated ${caseCount} selected RCAEval fault-injection cases with scheduled trials per
-case in the \`${summary.mode}\` condition selection. It used GPT-5.6 Sol with medium reasoning
+case in the \`${summary.mode}\` condition selection. It used \`${summary.model}\` with medium reasoning
 effort and the default context tier. Strict RCA workflow gates apply only to the skilled
 condition; both conditions use the same held-out correctness extraction and safety checks.
 
 The cases are controlled faults on microservice testbeds, not organic production incidents.
-${summary.trials.length} completed sessions cannot establish a general RCA accuracy rate.
+${summary.trials.length} recorded session results cannot establish a general RCA accuracy rate.
+Aborted sessions are failures, not completed RCA analyses.
 
 ## Provenance
 
@@ -216,6 +253,8 @@ ${summary.trials.length} completed sessions cannot establish a general RCA accur
 | Repository commit | \`${manifest.repositoryCommit}\` |
 | RCAEval revision | \`${manifest.sourceRevision}\` |
 | Dataset source and license | [phamquiluan/RCAEval](https://huggingface.co/datasets/phamquiluan/RCAEval), MIT |
+| Protocol | \`${summary.protocol}\` |
+| Evaluation profile | \`${summary.profile}\` |
 | Model | \`${manifest.model}\` |
 | Reasoning effort | \`${manifest.reasoningEffort}\` |
 | Context tier | \`${manifest.contextTier}\` |
@@ -225,6 +264,8 @@ ${summary.trials.length} completed sessions cannot establish a general RCA accur
 | Package lock SHA-256 | \`${manifest.packageLockSha256}\` |
 | Input fingerprint | \`${manifest.inputFingerprint}\` |
 | Authoritative run premium requests | ${authoritativeCost} |
+| Latest round execution status | ${summary.roundExecution?.status ?? "Unavailable - not recorded"} |
+| Remaining sessions in latest round | ${summary.roundExecution?.remainingSessions ?? "Unavailable - not recorded"} |
 
 ## Commands
 
@@ -236,14 +277,17 @@ ${commands.map((item) => `| \`${escapeTable(item.command)}\` | ${item.exitCode} 
 
 ${renderConditionComparison(summary, costs)}
 
-| Condition | Case | Trial | Integrity | Strict gates | Set A service | Set B service | Set B status | Correct cause tested | Human review |
-|-----------|------|------:|-----------|--------------|---------------|---------------|--------------|----------------------|--------------|
+| Condition | Case | Trial | Integrity | Strict gates | Set A service | Set B service | Set B status | Outcome and error | Correct cause tested | Human review |
+|-----------|------|------:|-----------|--------------|---------------|---------------|--------------|-------------------|----------------------|--------------|
 ${summary.trials.map((trial) => renderTrialRow(trial, adjudications)).join("\n")}
 
 Strict gates passed in ${strictPasses} of ${skilled.length} skilled sessions. The held-out
 root-cause service matched in Set A for ${serviceMatches} sessions and in Set B for
 ${leadingMatches} sessions. Set B abstained in ${leadingAbstentions} sessions. These are exact run
 counts, not population accuracy estimates.
+Technical protocol and execution failures have no usable diagnosis and are not abstentions.
+Blocked outcomes are valid evidence blockers, distinct from technical failures.
+Whether the correct cause was tested requires human review; the machine report does not establish test execution.
 
 Round-one checkpoint: **${summary.roundOneCheckpoint?.decision ?? "Unavailable"}**.
 ${
@@ -295,9 +339,14 @@ function renderReview(
   return `<!-- markdownlint-disable-file -->
 # RCAEval Human Review
 
+${profileNotice(summary)}
+
 ## Run Identity
 
 * Run ID: \`${summary.runId}\`
+* Protocol: \`${summary.protocol}\`
+* Evaluation profile: \`${summary.profile}\`
+* Model: \`${summary.model}\`
 * Repository commit: \`${manifest.repositoryCommit}\`
 * Input fingerprint: \`${manifest.inputFingerprint}\`
 * Trial count: ${summary.trials.length}
@@ -310,12 +359,12 @@ ${commands.map((item) => `* \`${item.command}\`: exit ${item.exitCode}, ${item.p
 
 ## Trial Review
 
-| Condition | Case | Trial | Machine integrity | Machine strict gates | Set A service | Set B service | Set B status | Human disposition | Reviewer rationale |
-|-----------|------|------:|-------------------|----------------------|---------------|---------------|--------------|-------------------|--------------------|
+| Condition | Case | Trial | Machine integrity | Machine strict gates | Set A service | Set B service | Set B status | Outcome and error | Human disposition | Reviewer rationale |
+|-----------|------|------:|-------------------|----------------------|---------------|---------------|--------------|-------------------|-------------------|--------------------|
 ${summary.trials
   .map(
     (trial) =>
-      `| ${trial.condition} | ${trial.caseId} | ${trial.trial} | ${trial.integrity} | ${formatStrict(trial, adjudications)} | ${trial.diagnostic.rootCauseService} | ${trial.leadingHypothesis?.rootCauseService ?? "not-reported"} | ${trial.leadingHypothesis?.status ?? "not-reported"} | Pending | Pending |`,
+      `| ${trial.condition} | ${trial.caseId} | ${trial.trial} | ${trial.integrity} | ${formatStrict(trial, adjudications)} | ${formatSetAService(trial)} | ${formatComparisonService(trial, "leadingHypothesis")} | ${trial.leadingHypothesis.status} | ${formatOutcome(trial)} | Pending | Pending |`,
   )
   .join("\n")}
 
@@ -336,12 +385,20 @@ function renderPrUpdate(
   commands: readonly CommandRecord[],
 ): string {
   const caseCount = new Set(summary.trials.map((trial) => trial.caseId)).size;
-  return `## CR-16 model-backed RCA evaluation
+  return `## ${summary.profile === "debug" ? "RCA harness debug run" : "CR-16 model-backed RCA evaluation"}
+
+${profileNotice(summary)}
 
 Executed ${summary.trials.length} blinded sessions across ${caseCount} selected RCAEval fault-injection
-cases using GPT-5.6 Sol, medium reasoning effort, and the default context tier.
+cases using \`${summary.model}\`, medium reasoning effort, and the default context tier.
+Profile: \`${summary.profile}\`. Protocol: \`${summary.protocol}\`.
 Condition selection: \`${summary.mode}\`. See the evidence report for condition-separated
 outcomes and matched-pair differences; no general skill-effectiveness claim is implied.
+Outcomes: ${summary.trials.filter((trial) => trial.outcome === "candidate").length} candidates,
+${summary.trials.filter((trial) => trial.outcome === "abstained").length} abstentions,
+${summary.trials.filter((trial) => trial.outcome === "blocked").length} evidence blockers,
+${summary.trials.filter((trial) => trial.outcome === "protocol-error").length} protocol failures,
+${summary.trials.filter((trial) => trial.outcome === "execution-error").length} execution failures.
 
 ### Validation
 
@@ -349,22 +406,35 @@ ${commands.map((item) => `* \`${item.command}\`: ${item.exitCode === 0 ? "passed
 
 Round-one gate: **${summary.roundOneCheckpoint?.decision ?? "Unavailable"}**.
 
-The committed sanitized evidence report is
-\`evals/rca-real-world/PR-3136-EVIDENCE.md\`. It separates strict workflow conformance from
+The ${summary.profile === "debug" ? "run-local debug evidence report is `DEBUG-EVIDENCE.md`" : "committed sanitized evidence report is\n`evals/rca-real-world/PR-3136-EVIDENCE.md`"}. It separates strict workflow conformance from
 descriptive held-out diagnostics and discloses fixture approvals, statistical inapplicability,
 the preflight model probe, and benchmark limitations.
 
-Human review and CR-16 disposition remain pending. Please reassess CR-16 against the committed
-evidence. This update does not claim a general RCA accuracy rate, resolve review threads, or close
+Human review and CR-16 disposition remain pending. ${summary.profile === "debug" ? "Do not use this debug run to establish CR-16 efficacy." : "Please reassess CR-16 against the committed evidence."}
+This update does not claim a general RCA accuracy rate, resolve review threads, or close
 issue #3134.
 `;
+}
+
+function profileNotice(summary: EvaluationSummary): string {
+  return summary.profile === "debug"
+    ? "**DEBUG RUN: harness diagnostics only; not skill efficacy evidence. Do not pool with production evaluations or historical protocols.**"
+    : `**Production evaluation run: ${EVALUATION_PROTOCOL} only; do not pool with debug runs or historical protocols.**`;
 }
 
 function renderTrialRow(
   trial: EvaluationSummary["trials"][number],
   adjudications: HumanAdjudications | undefined,
 ): string {
-  return `| ${trial.condition} | ${trial.caseId} | ${trial.trial} | ${trial.integrity} | ${formatStrict(trial, adjudications)} | ${trial.diagnostic.rootCauseService} | ${trial.leadingHypothesis?.rootCauseService ?? "not-reported"} | ${trial.leadingHypothesis?.status ?? "not-reported"} | ${trial.condition === "without-skill" ? "N/A (workflow)" : trial.diagnostic.correctCauseTested} | ${trial.humanReview} |`;
+  return `| ${trial.condition} | ${trial.caseId} | ${trial.trial} | ${trial.integrity} | ${formatStrict(trial, adjudications)} | ${formatSetAService(trial)} | ${formatComparisonService(trial, "leadingHypothesis")} | ${trial.leadingHypothesis.status} | ${formatOutcome(trial)} | ${trial.condition === "without-skill" ? "N/A (workflow)" : trial.diagnostic.correctCauseTested} | ${trial.humanReview} |`;
+}
+
+function formatSetAService(trial: EvaluationSummary["trials"][number]): string {
+  return trial.condition === "without-skill" ? "N/A (not requested)" : formatComparisonService(trial, "diagnostic");
+}
+
+function formatOutcome(trial: EvaluationSummary["trials"][number]): string {
+  return escapeTable([trial.outcome, trial.errorCode, trial.reason].filter(Boolean).join(": "));
 }
 
 function formatStrict(
@@ -374,34 +444,19 @@ function formatStrict(
   const failed = Object.entries(trial.strictGates)
     .filter(([gate, value]) => !gateSatisfied(trial.condition, gate, value));
   return effectiveStrictPass(trial, adjudications)
-    ? failed.length === 0
-      ? trial.condition === "without-skill" ? "pass; skill workflow N/A" : "pass"
-      : "pass (human-adjudicated wording)"
-    : `${failed.length} not passed`;
+    ? trial.condition === "without-skill" ? "pass; skill workflow N/A" : "pass"
+    : trial.integrity !== "pass" ? "unusable (integrity failure)" : `${failed.length} not passed`;
 }
 
 function effectiveStrictPass(
   trial: EvaluationSummary["trials"][number],
-  adjudications: HumanAdjudications | undefined,
+  _adjudications: HumanAdjudications | undefined,
 ): boolean {
   const failed = Object.entries(trial.strictGates)
     .filter(([gate, value]) => !gateSatisfied(trial.condition, gate, value))
     .map(([gate]) => gate);
-  if (failed.length === 0) {
-    return true;
-  }
-  return (
-    failed.length === 1 &&
-    failed[0] === "approvalClearlySimulated" &&
-    adjudications?.adjudications.some(
-      (item) =>
-        item.caseId === trial.caseId &&
-        item.trial === trial.trial &&
-        item.condition === trial.condition &&
-        item.gate === "approvalClearlySimulated" &&
-        item.decision === "pass",
-    ) === true
-  );
+  return trial.integrity === "pass" &&
+    !["protocol-error", "execution-error"].includes(trial.outcome) && failed.length === 0;
 }
 
 async function readPremiumRequestCosts(
@@ -411,20 +466,26 @@ async function readPremiumRequestCosts(
   const costs: Record<EvaluationCondition, number | null> = { "with-skill": 0, "without-skill": 0 };
   for (const trial of summary.trials) {
     const artifact = await readJson<{
-      cliCapture?: {
-        usageTurn1?: { totalPremiumRequestCost?: number };
-        usageTurn2?: { totalPremiumRequestCost?: number };
-        usageTurn3?: { totalPremiumRequestCost?: number };
-        usageTurn4?: { totalPremiumRequestCost?: number };
-      };
+      protocol?: string;
+      requestedProfile?: { evaluationProfile?: EvaluationProfile; model?: string };
+      cliCapture?: Readonly<Record<string, unknown>>;
     }>(
       join(trialDirectory(runRoot, trial.caseId, trial.trial, trial.condition), "session-artifact.json"),
     );
-    const cost =
-      artifact.cliCapture?.usageTurn4?.totalPremiumRequestCost ??
-      artifact.cliCapture?.usageTurn3?.totalPremiumRequestCost ??
-      artifact.cliCapture?.usageTurn2?.totalPremiumRequestCost ??
-      artifact.cliCapture?.usageTurn1?.totalPremiumRequestCost;
+    if (
+      artifact.protocol !== summary.protocol ||
+      artifact.requestedProfile?.evaluationProfile !== summary.profile ||
+      artifact.requestedProfile?.model !== summary.model
+    ) {
+      throw new Error("Cannot report mixed session profiles, models, or protocols");
+    }
+    const usages = Object.entries(artifact.cliCapture ?? {})
+      .filter(([key]) => /^usageTurn\d+$/.test(key))
+      .sort(([left], [right]) => Number(right.slice(9)) - Number(left.slice(9)));
+    const cost = usages.map(([, usage]) =>
+      usage && typeof usage === "object" && "totalPremiumRequestCost" in usage
+        ? usage.totalPremiumRequestCost : undefined
+    ).find((value) => typeof value === "number" && Number.isFinite(value) && value >= 0);
     const previous = costs[trial.condition];
     costs[trial.condition] = previous === null ||
       typeof cost !== "number" || !Number.isFinite(cost) || cost < 0
@@ -440,7 +501,10 @@ function renderConditionComparison(
 ): string {
   const rows = selectedConditions(summary.mode).map((condition) => {
     const trials = summary.trials.filter((trial) => trial.condition === condition);
-    return `| ${condition} | ${trials.length} | ${trials.filter((trial) => trial.integrity !== "pass").length} | ${trials.filter((trial) => trial.diagnostic.rootCauseService === "match").length} | ${trials.filter((trial) => trial.leadingHypothesis.rootCauseService === "match").length} | ${costs[condition] ?? "Unavailable"} |`;
+    const setAMatches = condition === "without-skill"
+      ? "N/A (not requested)"
+      : trials.filter((trial) => trial.integrity === "pass" && trial.diagnostic.rootCauseService === "match").length;
+    return `| ${condition} | ${trials.length} | ${trials.filter((trial) => trial.integrity !== "pass").length} | ${setAMatches} | ${trials.filter((trial) => trial.integrity === "pass" && trial.leadingHypothesis.rootCauseService === "match").length} | ${costs[condition] ?? "Unavailable"} |`;
   });
   const table = [
     "| Condition | Sessions | Integrity failures | Set A service matches | Set B service matches | Premium requests |",
@@ -451,39 +515,81 @@ function renderConditionComparison(
     return `${table}\n\nSingle-condition run: no paired skill-lift estimate is available.\n`;
   }
   const pairKeys = new Set(summary.trials.map((trial) => `${trial.caseId}/${trial.trial}`));
+  const comparisonRows: string[] = [];
   const pairs = [...pairKeys].flatMap((key) => {
     const trials = summary.trials.filter((trial) => `${trial.caseId}/${trial.trial}` === key);
     const skilled = trials.find((trial) => trial.condition === "with-skill");
     const baseline = trials.find((trial) => trial.condition === "without-skill");
+    const [caseId, trialNumber] = key.split("/");
+    comparisonRows.push(
+      `| ${caseId} | ${trialNumber} | ${formatComparisonService(baseline, "leadingHypothesis")} | ${formatComparisonService(skilled, "diagnostic")} | ${formatComparisonService(skilled, "leadingHypothesis")} |`,
+    );
     return skilled?.integrity === "pass" && baseline?.integrity === "pass"
       ? [{ skilled, baseline }]
       : [];
   });
-  const differences = (["diagnostic", "leadingHypothesis"] as const).map((field, index) => {
-    const skillOnly = pairs.filter(({ skilled, baseline }) =>
-      skilled[field].rootCauseService === "match" && baseline[field].rootCauseService !== "match",
-    ).length;
-    const baselineOnly = pairs.filter(({ skilled, baseline }) =>
-      baseline[field].rootCauseService === "match" && skilled[field].rootCauseService !== "match",
-    ).length;
-    const difference = pairs.length === 0 ? "Unavailable" : (100 * (skillOnly - baselineOnly) / pairs.length).toFixed(1);
-    return `| Set ${index === 0 ? "A" : "B"} service | ${pairs.length} | ${skillOnly} | ${baselineOnly} | ${difference} |`;
-  });
+  const skillOnly = pairs.filter(({ skilled, baseline }) =>
+    skilled.leadingHypothesis.rootCauseService === "match" && baseline.leadingHypothesis.rootCauseService !== "match",
+  ).length;
+  const baselineOnly = pairs.filter(({ skilled, baseline }) =>
+    baseline.leadingHypothesis.rootCauseService === "match" && skilled.leadingHypothesis.rootCauseService !== "match",
+  ).length;
+  const difference = pairs.length === 0 ? "Unavailable" : (100 * (skillOnly - baselineOnly) / pairs.length).toFixed(1);
   return `${table}
+
+| Case | Trial | Unskilled best guess | Skilled Set A | Skilled Set B |
+|------|------:|----------------------|---------------|---------------|
+${comparisonRows.join("\n")}
+
+Each case and trial shows all three results. Unskilled best guesses correspond to skilled
+Set B, not Set A's finding authority. Unassessed means no diagnostic attribution was established
+or reported, not an incorrect service guess. Incomplete or invalid sessions have no usable result;
+they are distinct from an unassessed finding or a wrong diagnosis. Not-run sessions remain visible.
 
 | Correctness metric | Valid pairs | Skill-only matches | Baseline-only matches | Skill minus baseline (percentage points) |
 |--------------------|------------:|-------------------:|----------------------:|----------------------------------------:|
-${differences.join("\n")}
+| Set B service | ${pairs.length} | ${skillOnly} | ${baselineOnly} | ${difference} |
 
 Pairs match the same case and trial; both sessions must pass integrity.
 Excluded incomplete or invalid pairs: ${pairKeys.size - pairs.length}.
 Unassessed diagnoses and abstentions are not matches. These are descriptive differences on
 selected dependent cases, not statistical significance or a general effectiveness estimate.
-The bounded host-directed evidence protocol and output-schema instructions apply to both
+The ${EVALUATION_PROTOCOL} autonomous host-mediated evidence protocol and output-schema instructions apply to both
 conditions. Skill workflow conformance is not a baseline correctness criterion.
-Set B service match is the primary shared diagnostic endpoint. Set A also reflects different
-diagnosis-claim constraints and must not be interpreted as a common workflow-completion measure.
+Set B service match compares the skill's leading hypothesis with the baseline's single best
+diagnostic guess. The baseline is not asked for Set A; its Set A cells are not applicable,
+not diagnostic failures. Set A is reported only for the skilled condition and is not a paired metric.
 `;
+}
+
+function formatComparisonService(
+  trial: EvaluationSummary["trials"][number] | undefined,
+  endpoint: "diagnostic" | "leadingHypothesis",
+): string {
+  if (trial === undefined) {
+    return "Not run";
+  }
+  if (trial.integrity !== "pass") {
+    return `Unavailable (${escapeTable(trial.outcome)}${trial.errorCode ? `: ${escapeTable(trial.errorCode)}` : ""})`;
+  }
+  if (trial.outcome === "blocked") {
+    return "Blocked (evidence unavailable; abstained)";
+  }
+  if (endpoint === "leadingHypothesis") {
+    if (trial.leadingHypothesis.status === "abstained") {
+      return "No defensible candidate (abstained)";
+    }
+    if (trial.leadingHypothesis.status === "unusable") {
+      return "Unavailable (unusable diagnostic)";
+    }
+  }
+  const result = trial[endpoint];
+  if (result.rootCauseService === "unassessed") {
+    return "Unassessed";
+  }
+  return result.extractedService === undefined
+    ? result.rootCauseService
+    : `${escapeTable(result.extractedService)} (${result.rootCauseService})`;
 }
 
 async function readOptionalJson<T>(path: string): Promise<T | undefined> {
@@ -498,7 +604,7 @@ async function readOptionalJson<T>(path: string): Promise<T | undefined> {
 }
 
 function escapeTable(value: string): string {
-  return value.replaceAll("|", "\\|");
+  return value.replaceAll("|", "\\|").replace(/\r?\n/g, " ");
 }
 
 function cliVersions(summary: EvaluationSummary): string[] {

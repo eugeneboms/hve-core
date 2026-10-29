@@ -88,7 +88,7 @@ test("blocks tool execution before exact approval", async () => {
   assert.equal(harness.traces[0]?.status, "blocked");
 });
 
-test("returns source-specific baseline and post-onset query guidance", async () => {
+test("returns timestamp units without prescribing observation windows", async () => {
   const root = await caseRoot();
   const ledger = new FixtureApprovalLedger(
     [approval("read_incident_scope", "read", {})],
@@ -98,25 +98,14 @@ test("returns source-specific baseline and post-onset query guidance", async () 
   const scope = harness.tools.find((tool) => tool.name === "read_incident_scope");
   const result = JSON.parse(await scope!.handler({})) as {
     data: {
-      queryGuidance: {
-        baselineWindow: { startTime: number; endTime: number };
-        postOnsetWindow: { startTime: number; endTime: number };
-        tracePostOnsetWindow: { startTime: number; endTime: number };
-      };
+      timeUnits: { metricsAndLogs: string; traces: string };
+      queryGuidance?: unknown;
     };
   };
-  assert.deepEqual(result.data.queryGuidance.baselineWindow, {
-    startTime: 1699999700,
-    endTime: 1700000000,
+  assert.deepEqual(result.data.timeUnits, {
+    metricsAndLogs: "epoch seconds", traces: "epoch milliseconds",
   });
-  assert.deepEqual(result.data.queryGuidance.postOnsetWindow, {
-    startTime: 1700000000,
-    endTime: 1700000300,
-  });
-  assert.deepEqual(result.data.queryGuidance.tracePostOnsetWindow, {
-    startTime: 1700000000000,
-    endTime: 1700000300000,
-  });
+  assert.equal(result.data.queryGuidance, undefined);
 });
 
 test("rejects an approved evidence call without a bounded time window", async () => {

@@ -6,6 +6,7 @@ import { test } from "node:test";
 
 import {
   FixtureApprovalLedger,
+  approvalTimingInstruction,
   parseApprovalRequest,
   redactApprovalParameters,
   type ApprovalRequestItem,
@@ -34,6 +35,23 @@ test("parses exactly one enumerated approval request", () => {
     `Request:\n\`\`\`json\n${JSON.stringify({ approvalRequests: [request()] })}\n\`\`\``,
   );
   assert.equal(parsed.approvalRequests.length, 1);
+});
+
+test("allows an explicit blocked stop only after initial scope collection", () => {
+  const response = (value: unknown): string => `\`\`\`json\n${JSON.stringify(value)}\n\`\`\``;
+  const stop = response({ approvalRequests: [], stopReason: "Required query windows are unavailable." });
+  assert.throws(() => parseApprovalRequest(stop), /blocked stop requires/);
+  assert.equal(parseApprovalRequest(stop, true).stopReason, "Required query windows are unavailable.");
+  assert.throws(() => parseApprovalRequest(response({ approvalRequests: [] }), true), /1-12 calls/);
+  for (const stopReason of ["", " ", null, 1, "x".repeat(2_001)]) {
+    assert.throws(() => parseApprovalRequest(response({ approvalRequests: [], stopReason }), true), /blocked stop requires/);
+  }
+  assert.throws(() => parseApprovalRequest(response({
+    approvalRequests: [request()], stopReason: "Stopped",
+  }), true), /blocked stop requires/);
+  assert.throws(() => parseApprovalRequest(response({
+    approvalRequests: Array.from({ length: 13 }, () => request()),
+  }), true), /1-12 calls/);
 });
 
 test("rejects tool-class, effectful, and overlong approvals", () => {
@@ -78,6 +96,15 @@ test("rejects expired approvals", () => {
   const ledger = new FixtureApprovalLedger([request()], () => current);
   current = new Date("2026-10-19T20:11:00.000Z");
   assert.throws(() => ledger.consume("read_incident_scope", "read", {}), /expired/i);
+});
+
+test("provides an exact host-clock expiry and still rejects model-extended deadlines", () => {
+  const guidance = approvalTimingInstruction(now);
+  assert.match(guidance, /Current host UTC time: 2026-10-19T20:00:00.000Z/);
+  assert.match(guidance, /Use exactly "2026-10-19T20:15:00.000Z"/);
+  assert.throws(() => new FixtureApprovalLedger([
+    request({ expiresAt: "2026-10-19T21:15:00.000Z" }),
+  ], () => now), /invalid expiry/);
 });
 
 test("redacts nested secret-shaped keys without changing the input parameter tree", () => {

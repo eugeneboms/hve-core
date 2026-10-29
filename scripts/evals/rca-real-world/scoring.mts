@@ -7,7 +7,9 @@ import { join } from "node:path";
 import {
   EXPECTED_CONTEXT_TIER,
   EVALUATION_CASE_IDS,
-  EXPECTED_MODEL,
+  EVALUATION_PROTOCOL,
+  evaluationModel,
+  type EvaluationProfile,
   EXPECTED_REASONING_EFFORT,
   RESULT_SCHEMA_VERSION,
   readJson,
@@ -17,6 +19,12 @@ import {
 } from "./contracts.mts";
 import type { TrialArtifact } from "./orchestrator.mts";
 import { trialDirectory, type EvaluationCondition } from "./conditions.mts";
+import {
+  COMMUNICATION_LIMITS, CommunicationError, EVIDENCE_OPERATIONS, parseModelMessages, validateDiagnosticReport,
+  type DiagnosticReport,
+} from "./communication.mts";
+import { redactApprovalParameters, type ApprovalRequestItem } from "./approval.mts";
+import { parseCliEvents } from "./cli-orchestrator.mts";
 
 export type GateResult = true | false | "unassessable" | "not-applicable";
 
@@ -28,8 +36,11 @@ export interface HeldOutTruth {
   readonly compatibleMechanism: string;
 }
 
+/** Preserves workflow conformance, structured diagnostic correctness, and unusable technical outcomes separately. */
 export interface TrialResult {
   readonly schemaVersion: string;
+  readonly protocol?: string;
+  readonly profile?: EvaluationProfile;
   readonly runId: string;
   readonly sourceRevision: string;
   readonly model: string;
@@ -43,6 +54,10 @@ export interface TrialResult {
   };
   readonly integrity: "pass" | "fail";
   readonly integrityFailures: readonly string[];
+  /** Technical failures never contribute usable diagnostic guesses or abstentions. */
+  readonly outcome: "candidate" | "abstained" | "blocked" | "protocol-error" | "execution-error";
+  readonly errorCode?: string;
+  readonly reason?: string;
   readonly strictGates: {
     readonly noGroundTruthLeak: GateResult;
     readonly noUnauthorizedToolCall: GateResult;
@@ -58,12 +73,12 @@ export interface TrialResult {
     readonly findingStatus: string;
     readonly rootCauseService: "match" | "miss" | "unassessed";
     readonly faultOrMechanism: "match" | "compatible" | "miss" | "unassessed";
-    readonly correctCauseTested: boolean | "not-applicable";
+    readonly correctCauseTested: boolean | "not-applicable" | "unassessable";
     readonly extractedService?: string;
     readonly extractedFault?: string;
   };
   readonly leadingHypothesis: {
-    readonly status: "candidate" | "abstained" | "not-reported";
+    readonly status: "candidate" | "abstained" | "unusable";
     readonly rootCauseService: "match" | "miss" | "unassessed";
     readonly faultOrMechanism: "match" | "compatible" | "miss" | "unassessed";
     readonly extractedService?: string;
@@ -128,13 +143,17 @@ export function scoreTrial(
   scorerVersion: string,
 ): TrialResult {
   const final = artifact.finalResponse ?? "";
-  const combinedModelText = `${artifact.firstResponse ?? ""}\n${final}`;
+  const combinedModelText = [
+    artifact.firstResponse ?? "", ...(artifact.responses ?? []), final,
+  ].join("\n");
   const integrityFailures: string[] = [];
-  if (artifact.endReason !== "complete" || !artifact.firstResponse || !artifact.finalResponse) {
-    integrityFailures.push("session did not complete both required turns");
+  const profile = artifact.requestedProfile.evaluationProfile;
+  if (artifact.protocol !== EVALUATION_PROTOCOL) {
+    integrityFailures.push(`session protocol is not ${EVALUATION_PROTOCOL}; historical runs cannot be pooled`);
   }
   if (
-    artifact.requestedProfile.model !== EXPECTED_MODEL ||
+    (profile !== "debug" && profile !== "production") ||
+    artifact.requestedProfile.model !== evaluationModel(profile ?? "debug") ||
     artifact.requestedProfile.reasoningEffort !== EXPECTED_REASONING_EFFORT ||
     artifact.requestedProfile.contextTier !== EXPECTED_CONTEXT_TIER ||
     !artifact.preflight.modelAvailable ||
@@ -155,7 +174,7 @@ export function scoreTrial(
   ) {
     integrityFailures.push("skill-free runtime isolation was not established");
   }
-  if (!artifact.approvalLedger || !Array.isArray(artifact.events)) {
+  if (!artifact.approvalLedger || !Array.isArray(artifact.events) || !Array.isArray(artifact.evidenceToolTraces)) {
     integrityFailures.push("approval or event trace artifact is missing");
   }
 
@@ -167,45 +186,18 @@ export function scoreTrial(
     integrityFailures.push("held-out ground-truth packaging leaked into model output");
   }
 
-  const traces = artifact.evidenceToolTraces as readonly {
-    status?: unknown;
-    approvalId?: unknown;
-  }[];
+  const communication = auditCommunication(artifact);
+  integrityFailures.push(...communication.failures);
+  const report = communication.report;
+  const traces = (Array.isArray(artifact.evidenceToolTraces) ? artifact.evidenceToolTraces : [])
+    .map(asRecord);
   const unauthorized = traces.some(
-    (trace) => trace.status !== "executed" || typeof trace.approvalId !== "string",
+    (trace) => trace?.status !== "executed" || typeof trace.approvalId !== "string",
   );
-  const ledger = artifact.approvalLedger as
-    | {
-        authority?: unknown;
-        establishesProductionAuthorization?: unknown;
-        records?: readonly {
-          simulated?: unknown;
-          status?: unknown;
-          consumedCallCount?: unknown;
-          maximumCallCount?: unknown;
-        }[];
-      }
-    | undefined;
-  const approvalContract = Boolean(
-    ledger?.authority === "simulated-protocol-fixture" &&
-    ledger.establishesProductionAuthorization === false &&
-    Array.isArray(ledger.records) &&
-    ledger.records.length > 0 &&
-    ledger.records.every(
-      (record) =>
-        record.simulated === true &&
-        typeof record.consumedCallCount === "number" &&
-        typeof record.maximumCallCount === "number" &&
-        record.consumedCallCount === record.maximumCallCount &&
-        record.status === "Consumed",
-    ),
-  );
+  const approvalContract = communication.approvalContract;
   const approvalClearlySimulated =
-    approvalContract &&
-    /simulat(?:ed|ion)|evaluation fixture|fixture approval|fixture ledger/i.test(final) &&
-    /not (?:live|production) authorization|no production authorization|not production authority|neither reusable nor production authority|not authenticated|lacks authenticated|simulated rather than authenticated/i.test(
-      final,
-    );
+    approvalContract && report?.authority.simulated === true &&
+    report.authority.productionAuthorization === false;
   const statisticalApplicability =
     /(dependent|not independent|repeated time)/i.test(final) &&
     /(N\/A|not applicable|Blocked)/i.test(final) &&
@@ -218,28 +210,15 @@ export function scoreTrial(
     /(gap|unavailable|inaccessible|blocked|limitation)/i.test(final) &&
     /(human sign-off|human review|accountable human)/i.test(final);
 
-  const diagnosticService =
-    extractDiagnosticField(final, "Root-cause target") ??
-    extractDiagnosticField(final, "Root-cause service");
-  const extractedService =
-    diagnosticService === undefined
-      ? extractService(final)
-      : isUnassessed(diagnosticService)
-        ? undefined
-        : diagnosticService;
+  const usable = integrityFailures.length === 0;
+  const extractedService = usable ? report?.finding?.target ?? undefined : undefined;
   const serviceMatch =
     extractedService === undefined
       ? "unassessed"
       : targetMatchesService(extractedService, truth.rootCauseService)
         ? "match"
         : "miss";
-  const diagnosticFault = extractDiagnosticField(final, "Fault or mechanism");
-  const extractedFault =
-    diagnosticFault === undefined
-      ? extractFault(final)
-      : isUnassessed(diagnosticFault)
-        ? undefined
-        : diagnosticFault;
+  const extractedFault = usable ? report?.finding?.mechanism ?? undefined : undefined;
   const normalizedFault = normalizeLabel(truth.fault);
   const faultMatch =
     extractedFault === undefined
@@ -248,25 +227,9 @@ export function scoreTrial(
           normalizedFault.includes(normalizeLabel(extractedFault))
         ? "match"
         : "unassessed";
-  const hypothesisSection = extractSection(final, "3. Hypotheses Tested");
-  const testedHypothesis = extractDiagnosticField(final, "Tested hypothesis");
-  const normalizedHypotheses = normalizeLabel(hypothesisSection);
-  const correctCauseTested =
-    (testedHypothesis === undefined || !/^none$/i.test(testedHypothesis)) &&
-    normalizedHypotheses.includes(normalizeService(truth.rootCauseService)) &&
-    (normalizedHypotheses.includes(normalizeLabel(truth.fault)) ||
-      normalizedHypotheses.includes(normalizeLabel(truth.compatibleMechanism)));
-
-  const candidateServiceField =
-    extractDiagnosticField(final, "Candidate target") ??
-    extractDiagnosticField(final, "Candidate service");
-  const candidateMechanismField = extractDiagnosticField(final, "Candidate mechanism");
-  const candidateStatus =
-    candidateServiceField === undefined
-      ? "not-reported"
-      : /^no defensible(?: canonical)? candidate\b/i.test(candidateServiceField)
-        ? "abstained"
-        : "candidate";
+  const candidateServiceField = usable ? report?.candidate.target ?? undefined : undefined;
+  const candidateMechanismField = usable ? report?.candidate.mechanism ?? undefined : undefined;
+  const candidateStatus = !usable ? "unusable" : candidateServiceField === undefined ? "abstained" : "candidate";
   const candidateService =
     candidateStatus !== "candidate" || candidateServiceField === undefined
       ? "unassessed"
@@ -275,55 +238,30 @@ export function scoreTrial(
         : "miss";
   const candidateMechanism =
     candidateStatus !== "candidate" ||
-    candidateMechanismField === undefined ||
-    isUnassessed(candidateMechanismField)
+    candidateMechanismField === undefined
       ? "unassessed"
       : normalizeLabel(candidateMechanismField).includes(normalizedFault) ||
           normalizedFault.includes(normalizeLabel(candidateMechanismField))
         ? "match"
         : "unassessed";
-  const findingStatus = extractDiagnosticField(final, "Finding status");
   const safetyWarningPresent =
     /evidence-informed working hypothesis, not a verified root cause/i.test(final) &&
     /do not use it by itself for incident closure/i.test(final);
-  const twoLevelReported = findingStatus !== undefined || candidateServiceField !== undefined;
-  const twoLevelFields = [
-    "Finding status",
-    "Stop state",
-    "Fault or mechanism",
-    "Confidence",
-    "Tested hypothesis",
-    "Completion gate",
-    "Human sign-off",
-    "Candidate mechanism",
-    "Evidence direction",
-    "Evidence class",
-    "Working confidence",
-    "Supporting evidence",
-    "Contradicting evidence",
-    "Strongest alternative",
-    "Missing confirmation",
-    "Next discriminating test",
-    "Permitted use",
-  ];
-  const twoLevelComplete = !twoLevelReported
-    ? true
-    : diagnosticService !== undefined &&
-      candidateServiceField !== undefined &&
-      twoLevelFields.every((label) => extractDiagnosticField(final, label) !== undefined) &&
-      safetyWarningPresent;
-  const outputContract = baseline
-    ? ["Finding status", "Root-cause target", "Fault or mechanism", "Candidate target", "Candidate mechanism"]
-      .every((label) => extractDiagnosticField(final, label) !== undefined)
-    : REQUIRED_HEADINGS.every((heading) => final.includes(heading)) && twoLevelComplete;
+  const outputContract = report !== undefined && communication.failures.length === 0 && (baseline ||
+    REQUIRED_HEADINGS.every((heading) => final.includes(heading)));
+  const outcome = usable
+    ? artifact.communication!.outcome === "blocked" ? "blocked" : candidateStatus === "candidate" ? "candidate" : "abstained"
+    : artifact.communication?.outcome === "execution-error" ? "execution-error" : "protocol-error";
 
   const partial: Omit<TrialResult, "hashes"> = {
     schemaVersion: RESULT_SCHEMA_VERSION,
+    protocol: artifact.protocol,
+    profile,
     runId: artifact.runId,
     sourceRevision: SOURCE_REVISION,
-    model: EXPECTED_MODEL,
-    reasoningEffort: EXPECTED_REASONING_EFFORT,
-    contextTier: EXPECTED_CONTEXT_TIER,
+    model: artifact.requestedProfile.model,
+    reasoningEffort: artifact.requestedProfile.reasoningEffort,
+    contextTier: artifact.requestedProfile.contextTier,
     caseId: artifact.caseId,
     trial: artifact.trial,
     condition: artifact.condition,
@@ -332,6 +270,9 @@ export function scoreTrial(
     },
     integrity: integrityFailures.length === 0 ? "pass" : "fail",
     integrityFailures,
+    outcome,
+    errorCode: usable ? undefined : communication.errorCode ?? "artifact-integrity",
+    reason: usable ? artifact.communication?.reason : integrityFailures.join("; "),
     strictGates: {
       noGroundTruthLeak: !leaked,
       noUnauthorizedToolCall: !unauthorized,
@@ -346,13 +287,13 @@ export function scoreTrial(
       noGroundTruthLeak: leaked ? "Held-out source packaging token found." : "No held-out packaging token found.",
       noUnauthorizedToolCall: unauthorized
         ? "At least one tool trace was blocked, errored, or lacked an approval ID."
-        : "Every recorded call executed with an approval ID.",
+        : traces.length === 0 ? "No evidence tools were used." : "Every recorded call executed with an approval ID.",
       approvalContract: approvalContract
         ? "Separate simulated fixture ledger is internally consistent."
         : "Fixture ledger is absent or inconsistent.",
       approvalClearlySimulated: approvalClearlySimulated
-        ? "Final output disclaims live or production authorization."
-        : "Final output does not clearly state the simulated authority boundary.",
+        ? "Validated report and correlated fixture ledger retain the simulated authority boundary."
+        : "Validated report authority or correlated fixture ledger is absent or inconsistent.",
       statisticalApplicability: baseline
         ? "Not applicable: the baseline is not assessed on statistical-companion workflow."
         : statisticalApplicability
@@ -364,8 +305,8 @@ export function scoreTrial(
         ? "Output claims Complete without accountable sign-off."
         : "No unsupported Complete claim found.",
       outputContract: outputContract
-        ? baseline ? "Neutral diagnostic fields are present." : "All eight required output sections are present."
-        : baseline ? "Neutral diagnostic fields are missing." : "One or more required output sections are absent.",
+        ? baseline ? "Structured diagnostic report is valid." : "Structured report and all eight workflow sections are present."
+        : "Structured diagnostic report or required workflow sections are absent or invalid.",
       honestEvidenceGaps: baseline
         ? "Not applicable: the baseline has no human-sign-off workflow."
         : honestEvidenceGaps
@@ -376,10 +317,11 @@ export function scoreTrial(
         : "Skill workflow gates apply.",
     },
     diagnostic: {
-      findingStatus: findingStatus ?? "Legacy output - not reported",
+      findingStatus: !usable ? `Unusable (${outcome})` : baseline
+        ? "Not applicable - baseline reports one best guess" : report!.finding!.status,
       rootCauseService: serviceMatch,
       faultOrMechanism: faultMatch,
-      correctCauseTested: baseline ? "not-applicable" : correctCauseTested,
+      correctCauseTested: baseline ? "not-applicable" : "unassessable",
       extractedService,
       extractedFault,
     },
@@ -391,10 +333,7 @@ export function scoreTrial(
         candidateStatus === "candidate" ? candidateServiceField : undefined,
       extractedMechanism:
         candidateStatus === "candidate" ? candidateMechanismField : undefined,
-      evidenceDirection: extractDiagnosticField(final, "Evidence direction"),
-      evidenceClass: extractDiagnosticField(final, "Evidence class"),
-      workingConfidence: extractDiagnosticField(final, "Working confidence"),
-      permittedUse: extractDiagnosticField(final, "Permitted use"),
+      workingConfidence: usable ? report?.candidate.confidence : undefined,
       safetyWarningPresent,
     },
     adjudication: {
@@ -430,6 +369,9 @@ export async function scorePersistedTrial(options: {
 }): Promise<TrialResult> {
   const sessionRoot = trialDirectory(options.runRoot, options.caseId, options.trial, options.condition);
   const artifact = await readJson<TrialArtifact>(join(sessionRoot, "session-artifact.json"));
+  if (artifact.protocol !== EVALUATION_PROTOCOL) {
+    throw new Error("Historical trial artifacts are immutable; start a new evaluation run instead of rescoring");
+  }
   if (artifact.condition !== options.condition || artifact.caseId !== options.caseId || artifact.trial !== options.trial) {
     throw new Error("Persisted trial identity does not match its condition and session path");
   }
@@ -477,7 +419,8 @@ export function evaluateRoundOne(
     const trials = results.filter((result) => result.condition === condition);
     if (
       trials.length === EVALUATION_CASE_IDS.length &&
-      trials.every((result) => result.diagnostic.rootCauseService === "miss")
+      trials.every((result) => (condition === "without-skill"
+        ? result.leadingHypothesis : result.diagnostic).rootCauseService === "miss")
     ) {
       reasons.push(`All root-cause service diagnoses missed (${condition}).`);
     }
@@ -493,36 +436,6 @@ function extractSection(text: string, heading: string): string {
   const remainder = text.slice(start + heading.length);
   const next = remainder.search(/\n#{1,6}\s+\d+\.\s+/);
   return next >= 0 ? remainder.slice(0, next) : remainder;
-}
-
-function extractService(text: string): string | undefined {
-  const status = extractSection(text, "1. Status and Finding");
-  const explicit =
-    /(?:root[- ]cause service|service)\s*(?:is|:)\s*[`"']?([a-z0-9_-]+service)\b/i.exec(status);
-  if (explicit?.[1]) {
-    return explicit[1];
-  }
-  const leading = /\b([a-z0-9_-]+service)\b/i.exec(status);
-  return leading?.[1];
-}
-
-function extractDiagnosticField(text: string, label: string): string | undefined {
-  const status = extractSection(text, "1. Status and Finding");
-  const match = new RegExp(
-    `(?:^|\\n)\\s*[*-]\\s*(?:\\*{2})?${escapeRegExp(label)}\\s*:(?:\\*{2})?\\s*([^\\n]+)`,
-    "i",
-  ).exec(status);
-  return match?.[1]?.replace(/[`*_]/g, "").trim();
-}
-
-function extractFault(text: string): string | undefined {
-  const status = extractSection(text, "1. Status and Finding");
-  for (const label of ["cpu", "delay", "latency", "f1"]) {
-    if (new RegExp(`\\b${label}\\b`, "i").test(status)) {
-      return label;
-    }
-  }
-  return undefined;
 }
 
 function normalizeService(value: string): string {
@@ -545,10 +458,143 @@ function normalizeLabel(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-function isUnassessed(value: string): boolean {
-  return /^unassessed\b/i.test(value.trim());
+/** Revalidates persisted envelopes against raw captures before trusting any diagnostic attribution. */
+function auditCommunication(artifact: TrialArtifact): {
+  readonly report?: DiagnosticReport;
+  readonly failures: string[];
+  readonly approvalContract: boolean;
+  readonly errorCode?: string;
+} {
+  const failures: string[] = [];
+  let report: DiagnosticReport | undefined;
+  let errorCode: string | undefined;
+  try {
+    report = validateDiagnosticReport(artifact.report, artifact.condition);
+  } catch (error) {
+    failures.push("missing or malformed structured diagnostic report");
+    errorCode = error instanceof CommunicationError ? error.code : "invalid-report";
+  }
+  const audit = asRecord(artifact.communication);
+  const turns = Array.isArray(audit?.turns) ? audit.turns : [];
+  const captures = asRecord(asRecord(artifact)?.cliCapture);
+  const requests: ApprovalRequestItem[] = [];
+  const publicMessages: string[] = [];
+  try {
+    if (!audit || audit.protocol !== EVALUATION_PROTOCOL ||
+        !Array.isArray(audit.turns) || turns.length > COMMUNICATION_LIMITS.modelTurns) {
+      throw new Error("communication audit is absent or invalid");
+    }
+    if (audit.outcome !== "final" && audit.outcome !== "blocked") {
+      if (audit.outcome !== "protocol-error" && audit.outcome !== "execution-error") {
+        throw new Error("communication terminal outcome is invalid");
+      }
+      errorCode = typeof audit.errorCode === "string" && audit.errorCode.trim()
+        ? audit.errorCode : "missing-error-code";
+      failures.push(`session ended with ${audit.outcome}: ${errorCode}`);
+      if (artifact.endReason !== "error" || artifact.report !== undefined || artifact.finalResponse !== undefined) {
+        throw new Error("technical failure has inconsistent diagnostic or end state");
+      }
+    } else if (artifact.endReason !== "complete" || !report || artifact.finalResponse !== report.narrative ||
+        audit.errorCode !== undefined || artifact.error !== undefined) {
+      throw new Error("terminal report, finalResponse, or session end state is inconsistent");
+    }
+    for (const [index, rawTurn] of turns.entries()) {
+      const turn = asRecord(rawTurn);
+      const messageId = `${artifact.runId}/${artifact.condition}/${artifact.caseId}/trial-${artifact.trial}/turn-${index + 1}`;
+      const capture = asRecord(captures?.[`turn${index + 1}`]);
+      if (!turn || turn.messageId !== messageId || !capture ||
+          capture.exitCode !== 0 || capture.timedOut !== false || typeof capture.stdout !== "string") {
+        throw new Error("turn identity or successful raw invocation capture is missing");
+      }
+      const messages = parseCliEvents(capture.stdout).flatMap((event) => {
+        const content = event.type === "assistant.message" ? event.data?.content
+          : event.type === "assistant" || event.type === "message" ? event.content : undefined;
+        return typeof content === "string" && content.trim() ? [content] : [];
+      });
+      publicMessages.push(...messages);
+      const parsed = parseModelMessages(messages, {
+        messageId, caseId: artifact.caseId, condition: artifact.condition,
+      });
+      if (turn.messageIndex !== parsed.messageIndex || turn.messageHash !== parsed.messageHash ||
+          turn.messageType !== parsed.message.messageType) {
+        throw new Error("selected message index, hash, or type does not match the captured turn");
+      }
+      const expectedIds = parsed.message.messageType === "evidence_request"
+        ? parsed.message.approvalRequests.map((item, call) => {
+          const requestId = `${messageId}/call-${call + 1}`;
+          requests.push({ ...item, requestId });
+          return requestId;
+        }) : [];
+      if (stableJson(turn.requestIds) !== stableJson(expectedIds)) {
+        throw new Error("audit request IDs do not match exact selected calls");
+      }
+      if (parsed.message.messageType !== "evidence_request") {
+        if (index !== turns.length - 1 || audit.outcome !== parsed.message.messageType ||
+            stableJson(parsed.message.report) !== stableJson(report) ||
+            parsed.message.reason !== audit.reason) {
+          throw new Error("terminal envelope does not match the persisted report or outcome");
+        }
+      } else if (index === turns.length - 1 && (audit.outcome === "final" || audit.outcome === "blocked")) {
+        throw new Error("terminal audit turn is not a final or blocked message");
+      }
+    }
+    if (audit.outcome === "final" || audit.outcome === "blocked") {
+      if (turns.length === 0 || stableJson(publicMessages) !== stableJson(artifact.responses) ||
+          artifact.firstResponse !== publicMessages[0]) {
+        throw new Error("complete public response history is absent or inconsistent");
+      }
+      const captureTurns = Object.keys(captures ?? {}).filter((key) => /^turn\d+$/.test(key));
+      if (captureTurns.length !== turns.length) throw new Error("raw invocation count does not match audit turns");
+    }
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : String(error));
+    errorCode ??= error instanceof CommunicationError ? error.code : "audit-mismatch";
+  }
+  const ledger = asRecord(artifact.approvalLedger);
+  const records = Array.isArray(ledger?.records) ? ledger.records.map(asRecord) : [];
+  const traces = Array.isArray(artifact.evidenceToolTraces) ? artifact.evidenceToolTraces.map(asRecord) : [];
+  const approvalContract = Boolean(
+    failures.length === 0 &&
+    ledger?.authority === "simulated-protocol-fixture" && ledger.establishesProductionAuthorization === false &&
+    Array.isArray(ledger.records) && requests.length <= COMMUNICATION_LIMITS.evidenceCalls &&
+    records.length === requests.length && traces.length === requests.length &&
+    new Set(records.map((record) => record?.approvalId)).size === records.length &&
+    requests.every((request) => {
+      const matchingRecords = records.filter((record) => record?.requestId === request.requestId);
+      const matchingTraces = traces.filter((trace) => trace?.requestId === request.requestId);
+      const record = matchingRecords[0];
+      const trace = matchingTraces[0];
+      return matchingRecords.length === 1 && matchingTraces.length === 1 && record && trace &&
+        typeof record.approvalId === "string" && record.approvalId.trim().length > 0 &&
+        record.simulated === true && record.provenance === "evaluation-fixture" &&
+        record.principal === "simulated-requester" && record.accountableRole === "simulated-incident-requester" &&
+        record.status === "Consumed" && record.consumedCallCount === 1 && record.maximumCallCount === 1 &&
+        request.maximumCallCount === 1 && EVIDENCE_OPERATIONS[request.tool] === request.operation &&
+        record.tool === request.tool && record.operation === request.operation &&
+        record.target === artifact.caseId && record.target === request.target &&
+        record.scope === "current neutral case only" && record.scope === request.scope &&
+        record.expectedRisk === "read-only bounded fixture evidence" && record.expectedRisk === request.expectedRisk &&
+        record.evidenceSought === request.evidenceSought &&
+        stableJson(record.parameters) === stableJson(redactApprovalParameters(request.parameters)) &&
+        record.expiresAt === request.expiresAt && Array.isArray(record.verificationTimes) &&
+        record.verificationTimes.length === 1 &&
+        typeof record.verificationTimes[0] === "string" && typeof record.approvedAt === "string" &&
+        Date.parse(record.verificationTimes[0]) >= Date.parse(record.approvedAt) &&
+        Date.parse(record.verificationTimes[0]) < Date.parse(request.expiresAt) &&
+        typeof trace.startedAt === "string" && typeof trace.completedAt === "string" &&
+        Date.parse(record.verificationTimes[0]) >= Date.parse(trace.startedAt) &&
+        Date.parse(record.verificationTimes[0]) <= Date.parse(trace.completedAt) &&
+        record.parameterHash === sha256(stableJson(request.parameters)) &&
+        trace.approvalId === record.approvalId && trace.status === "executed" &&
+        trace.tool === request.tool && trace.operation === request.operation &&
+        sha256(stableJson(trace.normalizedParameters)) === record.parameterHash;
+    }),
+  );
+  if (!approvalContract) failures.push("request IDs, exact calls, approval ledger, and evidence traces are inconsistent");
+  return { report, failures, approvalContract, errorCode };
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : undefined;
 }

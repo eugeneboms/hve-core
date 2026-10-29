@@ -12,6 +12,33 @@ export const EVALUATION_RUN_DIRECTORY = "rcaeval-three-case";
 export const EXPECTED_MODEL = "gpt-5.6-sol";
 export const EXPECTED_REASONING_EFFORT = "medium";
 export const EXPECTED_CONTEXT_TIER = "default";
+export const EVALUATION_PROTOCOL = "ad-hoc-v2";
+export const COMMUNICATION_LIMITS = {
+  modelTurns: 8, evidenceCalls: 24, approvalsPerBatch: 12, resultRows: 100,
+  resultBytes: 64 * 1024, batchBytes: 256 * 1024, messageBytes: 256 * 1024,
+  promptBytes: 512 * 1024, stdoutBytes: 1024 * 1024, stderrBytes: 64 * 1024,
+  turnMs: 240_000, sessionMs: 15 * 60 * 1000, aiCredits: 100,
+} as const;
+export const EVIDENCE_OPERATIONS: Readonly<Record<string, string>> = {
+  read_incident_scope: "read", aggregate_metrics: "aggregate", compare_metrics: "compare",
+  search_logs: "search", summarize_traces: "summarize",
+};
+
+/** Separates harness debugging from production-model evaluation evidence. */
+export type EvaluationProfile = "debug" | "production";
+
+/** Returns the fixed model for a profile; reasoning and context settings are shared. */
+export function evaluationModel(profile: EvaluationProfile): string {
+  return profile === "debug" ? "gpt-5.6-luna" : EXPECTED_MODEL;
+}
+
+/** Parses an exact profile name, rejecting unsupported values rather than silently defaulting. */
+export function parseEvaluationProfile(value: string): EvaluationProfile {
+  if (value !== "debug" && value !== "production") {
+    throw new Error(`Unknown evaluation profile: ${value}; expected debug or production`);
+  }
+  return value;
+}
 export const EVALUATION_CASE_IDS = [
   "case-01",
   "case-02",

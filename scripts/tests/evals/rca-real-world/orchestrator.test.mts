@@ -7,7 +7,8 @@ import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 
-import { runCliTrial } from "../../../evals/rca-real-world/cli-orchestrator.mts";
+import { cliStdinInput, runCliTrial } from "../../../evals/rca-real-world/cli-orchestrator.mts";
+import { createEvidenceTools } from "../../../evals/rca-real-world/evidence-tools.mts";
 import {
   EVALUATION_RUN_DIRECTORY, sha256, stableJson,
 } from "../../../evals/rca-real-world/contracts.mts";
@@ -20,6 +21,55 @@ import { sanitizeRun } from "../../../evals/rca-real-world/sanitize-run.mts";
 import { trialDirectory } from "../../../evals/rca-real-world/conditions.mts";
 
 const NOW = new Date("2026-10-19T20:00:00.000Z");
+
+test("keeps large scope mappings as complete valid JSON without prescribing query windows", async (context) => {
+  const root = await runRoot();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const metricColumns = Object.fromEntries(Array.from({ length: 200 }, (_, index) => [
+    `service-${index}_cpu`, { service: `service-${index}`, metric: "cpu" },
+  ]));
+  await writeFile(join(root, "inputs", "model-visible", "case-01", "metric-columns.json"), stableJson(metricColumns));
+  const evidence = createEvidenceTools({
+    caseRoot: join(root, "inputs", "model-visible", "case-01"),
+    ledger: { consume: () => "fixture-exact-scope" },
+  });
+  const text = await evidence.tools.find((tool) => tool.name === "read_incident_scope")!.handler({});
+  assert.ok(text.length > 7_000);
+  const result = JSON.parse(text);
+  assert.deepEqual(result.data.metricColumns, metricColumns);
+  assert.equal(result.data.queryGuidance, undefined);
+  assert.deepEqual(result.data.timeUnits, { metricsAndLogs: "epoch seconds", traces: "epoch milliseconds" });
+});
+
+test("moves large Unicode and quoted prompts to stdin without changing CLI flags", () => {
+  const prompt = "Quoted \"text\", CRLF\r\nUnicode \u03bb and backslash \\".repeat(2_000);
+  assert.ok(prompt.length > 32_767);
+  for (const flag of ["-p", "--prompt"]) {
+    const args = ["--model", "fixture", flag, prompt, "--available-tools"];
+    const invocation = cliStdinInput(args);
+    assert.deepEqual(invocation.args, ["--model", "fixture", "--available-tools"]);
+    assert.equal(invocation.input, prompt);
+    assert.equal(args[3], prompt);
+  }
+  assert.deepEqual(cliStdinInput(["--version"]), { args: ["--version"] });
+  assert.throws(() => cliStdinInput(["-p"]), /requires text/);
+});
+
+test("rejects oversized scope evidence explicitly instead of returning a clipped mapping", async (context) => {
+  const root = await runRoot();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const metricColumns = Object.fromEntries(Array.from({ length: 1500 }, (_, index) => [
+    `service-${index}_cpu`, { service: `service-${index}`, metric: "cpu" },
+  ]));
+  await writeFile(join(root, "inputs", "model-visible", "case-01", "metric-columns.json"), stableJson(metricColumns));
+  const evidence = createEvidenceTools({
+    caseRoot: join(root, "inputs", "model-visible", "case-01"),
+    ledger: { consume: () => "fixture-exact-scope" },
+  });
+  await assert.rejects(evidence.tools.find((tool) => tool.name === "read_incident_scope")!.handler({}),
+    /exceed|too large|limit/i);
+  assert.equal(evidence.traces.length, 1);
+});
 
 async function runRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "rca-orchestrator-"));
@@ -182,7 +232,7 @@ test("redacts CLI workspace paths in persisted errors and keeps hashes consisten
   assert.ok(artifact.redactionManifest.applied.includes("temporary-workspace"));
 });
 
-test("sanitizes persisted home paths and refreshes scores and checkpoint hashes", async (context) => {
+test("refuses historical sanitization before changing artifacts, summaries or checkpoint hashes", async (context) => {
   const repositoryRoot = await mkdtemp(join(tmpdir(), "rca-sanitize-"));
   context.after(() => rm(repositoryRoot, { recursive: true, force: true }));
   const runId = "sanitize-fixture";
@@ -222,25 +272,14 @@ test("sanitizes persisted home paths and refreshes scores and checkpoint hashes"
   await writeFile(join(root, "round-one-checkpoint.json"), stableJson({
     decision: "pause", trialResultHashes: {},
   }));
-  const result = await sanitizeRun(repositoryRoot, runId);
-  assert.equal(result.sessions, 2);
-  assert.ok(result.replacements >= 1);
-  const sanitized = JSON.parse(await readFile(join(sessionRoot, "session-artifact.json"), "utf8"));
-  assert.equal(sanitized.events[0].path.startsWith("[REDACTED_PATH]"), true);
-  assert.ok(sanitized.redactionManifest.applied.includes("temporary-workspace"));
-  const hashes = JSON.parse(await readFile(join(sessionRoot, "artifact-hashes.json"), "utf8"));
-  assert.equal(hashes.sessionArtifactSha256, sha256(stableJson(sanitized)));
-  const score = JSON.parse(await readFile(join(sessionRoot, "trial-result.json"), "utf8"));
-  const summary = JSON.parse(await readFile(join(root, "evaluation-summary.json"), "utf8"));
-  const checkpoint = JSON.parse(await readFile(join(root, "round-one-checkpoint.json"), "utf8"));
-  assert.equal(score.hashes.sessionArtifactSha256, hashes.sessionArtifactSha256);
-  assert.equal(summary.trials.length, 2);
-  assert.deepEqual(summary.trials[0], score);
-  assert.equal(checkpoint.trialResultHashes["with-skill/case-01"], score.hashes.resultSha256);
-  const baselineScore = JSON.parse(await readFile(join(baselineRoot, "trial-result.json"), "utf8"));
-  assert.equal(checkpoint.trialResultHashes["without-skill/case-01"], baselineScore.hashes.resultSha256);
-  const sanitizedBaseline = await readFile(join(baselineRoot, "session-artifact.json"), "utf8");
-  assert.equal(sanitizedBaseline.includes(JSON.stringify(homedir()).slice(1, -1)), false);
+  const paths = [
+    join(sessionRoot, "session-artifact.json"), join(baselineRoot, "session-artifact.json"),
+    join(root, "evaluation-summary.json"), join(root, "round-one-checkpoint.json"),
+  ];
+  const before = await Promise.all(paths.map((path) => readFile(path)));
+  await assert.rejects(sanitizeRun(repositoryRoot, runId), /Historical evaluation artifacts are immutable/);
+  for (const [index, path] of paths.entries()) assert.deepEqual(await readFile(path), before[index]);
+  await assert.rejects(readFile(join(sessionRoot, "trial-result.json")), { code: "ENOENT" });
 });
 
 test("fails closed before sending when the exact model profile is unavailable", async () => {

@@ -9,11 +9,21 @@ import {
   EVALUATION_RUN_DIRECTORY,
   compareStrings,
   createSchedule,
+  evaluationModel,
+  parseEvaluationProfile,
   resolveInside,
   stableJson,
   validateContract,
   type EvaluationContract,
 } from "../../../evals/rca-real-world/contracts.mts";
+
+test("maps exact evaluation profiles to distinct fixed models", () => {
+  assert.equal(evaluationModel(parseEvaluationProfile("debug")), "gpt-5.6-luna");
+  assert.equal(evaluationModel(parseEvaluationProfile("production")), "gpt-5.6-sol");
+  for (const invalid of ["", "Debug", "prod", "gpt-5.6-sol"]) {
+    assert.throws(() => parseEvaluationProfile(invalid), /expected debug or production/);
+  }
+});
 
 test("preserves the existing evaluation directory name", () => {
   assert.equal(EVALUATION_RUN_DIRECTORY, "rcaeval-three-case");

@@ -3,9 +3,10 @@
 
 import { randomUUID } from "node:crypto";
 
-import { sha256, stableJson } from "./contracts.mts";
+import { COMMUNICATION_LIMITS, sha256, stableJson } from "./contracts.mts";
 
 export interface ApprovalRequestItem {
+  readonly requestId?: string;
   readonly tool: string;
   readonly operation: string;
   readonly parameters: Readonly<Record<string, unknown>>;
@@ -19,6 +20,7 @@ export interface ApprovalRequestItem {
 
 export interface ApprovalRequestEnvelope {
   readonly approvalRequests: readonly ApprovalRequestItem[];
+  readonly stopReason?: string;
 }
 
 export interface FixtureApprovalRecord extends ApprovalRequestItem {
@@ -44,15 +46,28 @@ export interface ApprovalLedgerArtifact {
 }
 
 const APPROVAL_BLOCK = /```json\s*([\s\S]*?)```/gi;
-const MAX_APPROVALS = 12;
+const MAX_APPROVALS = COMMUNICATION_LIMITS.approvalsPerBatch;
+
+/** Supplies a fresh host-clock deadline for a model-requested simulated approval batch. */
+export function approvalTimingInstruction(now: Date): string {
+  const expiry = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+  return `Current host UTC time: ${now.toISOString()}. Use exactly "${expiry}" for every expiresAt in this batch. Do not infer the current time from incident telemetry or extend the deadline. The host rejects expired approvals and deadlines more than 30 minutes ahead.`;
+}
 
 /**
  * Parses one enumerated approval envelope from an assistant response.
  *
+ * @param allowBlockedStop - Allows no calls only with an explicit, bounded stop reason.
+ *   Initial approval requests must leave this false.
  * @throws When no single valid JSON block contains an `approvalRequests` array.
  */
-export function parseApprovalRequest(text: string): ApprovalRequestEnvelope {
+export function parseApprovalRequest(text: string, allowBlockedStop = false): ApprovalRequestEnvelope {
   const candidates: unknown[] = [];
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    try { candidates.push(JSON.parse(trimmed)); }
+    catch (error) { throw new Error(`Malformed approval JSON: ${error instanceof Error ? error.message : String(error)}`); }
+  }
   for (const match of text.matchAll(APPROVAL_BLOCK)) {
     try {
       candidates.push(JSON.parse(match[1] ?? ""));
@@ -68,6 +83,19 @@ export function parseApprovalRequest(text: string): ApprovalRequestEnvelope {
   );
   if (envelopes.length !== 1) {
     throw new Error(`Expected exactly one approval request envelope, received ${envelopes.length}`);
+  }
+  const envelope = envelopes[0];
+  if (envelope.stopReason !== undefined) {
+    if (
+      !allowBlockedStop ||
+      envelope.approvalRequests.length !== 0 ||
+      typeof envelope.stopReason !== "string" ||
+      envelope.stopReason.trim().length === 0 ||
+      envelope.stopReason.length > 2_000
+    ) {
+      throw new Error("A blocked stop requires no calls and a nonempty stopReason of at most 2000 characters");
+    }
+    return envelope;
   }
   if (
     envelopes[0].approvalRequests.length === 0 ||
@@ -118,6 +146,11 @@ export class FixtureApprovalLedger {
         verificationTimes: [...record.verificationTimes],
       })),
     };
+  }
+
+  /** Resolves the host call identity without treating stored approval history as new authority. */
+  requestId(approvalId: string): string | undefined {
+    return this.#records.find((record) => record.approvalId === approvalId)?.requestId;
   }
 }
 

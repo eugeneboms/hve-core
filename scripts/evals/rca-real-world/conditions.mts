@@ -3,7 +3,7 @@
 
 import { join } from "node:path";
 
-import { createSchedule, EVALUATION_CASE_IDS } from "./contracts.mts";
+import { createSchedule } from "./contracts.mts";
 
 export type EvaluationCondition = "with-skill" | "without-skill";
 export type EvaluationMode = "both" | EvaluationCondition;
@@ -28,19 +28,23 @@ export function selectedConditions(mode: EvaluationMode): readonly EvaluationCon
   return mode === "both" ? ["with-skill", "without-skill"] : [mode];
 }
 
-/** Pairs each case/trial, alternating which condition goes first across cases and rounds. */
+/** Orders sessions by round, then selected condition (with skills first), then case. */
 export function createConditionSchedule(rounds: number, mode: EvaluationMode): readonly {
   readonly caseId: string;
   readonly trial: number;
   readonly condition: EvaluationCondition;
 }[] {
-  return createSchedule(rounds).flatMap((item, index) => {
-    const conditions = [...selectedConditions(mode)];
-    if ((index % EVALUATION_CASE_IDS.length + item.trial) % 2 === 0) {
-      conditions.reverse();
+  const caseSchedule = createSchedule(rounds);
+  const conditions = selectedConditions(mode);
+  const schedule: { caseId: string; trial: number; condition: EvaluationCondition }[] = [];
+  for (let trial = 1; trial <= rounds; trial += 1) {
+    for (const condition of conditions) {
+      for (const item of caseSchedule.filter((item) => item.trial === trial)) {
+        schedule.push({ ...item, condition });
+      }
     }
-    return conditions.map((condition) => ({ ...item, condition }));
-  });
+  }
+  return schedule;
 }
 
 /** Keeps condition identities separate for artifacts, scores, usage, and checkpoint hashes. */
@@ -53,18 +57,16 @@ export function trialDirectory(
   return join(runRoot, "sessions", condition, caseId, `trial-${trial}`);
 }
 
-/** Limits the baseline's format instructions to fields needed by the shared correctness scorer. */
+/** Requests one best diagnostic guess for the shared Set B scorer, without a Set A finding. */
 export function baselineOutputContract(): string {
   return [
     "Solve the incident using your own analysis, without skills or custom agents.",
-    "Start with `### 1. Status and Finding` and these bullet fields:",
-    "* Finding status: your assessment of how well the diagnosis is supported",
-    "* Root-cause target: the evidence-supported service, or Unassessed",
-    "* Fault or mechanism: the evidence-supported mechanism, or Unassessed",
-    "* Candidate target: your best weaker service candidate, or No defensible candidate",
-    "* Candidate mechanism: its proposed mechanism, or Unassessed",
+    "Report one best diagnostic guess using these opening bullet fields:",
+    "* Candidate target: your best overall service diagnosis, or No defensible candidate if the evidence cannot identify one",
+    "* Candidate mechanism: your best explanation of how that service caused the incident, or Unassessed",
+    "* Working confidence: your confidence in this diagnosis, with a brief reason",
     "After these fields, explain your evidence, uncertainty, alternatives, and limitations in your own format.",
-    "Distinguish a supported diagnosis from a tentative candidate; do not fill missing evidence with guesses.",
+    "Give your strongest diagnosis, not a weaker alternative. Do not fabricate evidence or present an unverified guess as a verified root cause.",
     "State that fixture approval is simulated and is not production authorization.",
   ].join("\n");
 }

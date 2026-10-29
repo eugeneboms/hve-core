@@ -13,6 +13,7 @@ import {
   type MetricColumnMap,
   type MetricIdentity,
 } from "./metric-schema.mts";
+import { COMMUNICATION_LIMITS, CommunicationError } from "./communication.mts";
 
 export interface EvidenceToolTrace {
   readonly sequence: number;
@@ -20,6 +21,7 @@ export interface EvidenceToolTrace {
   readonly operation: string;
   readonly normalizedParameters: Readonly<Record<string, unknown>>;
   readonly approvalId?: string;
+  readonly requestId?: string;
   readonly status: "executed" | "blocked" | "error";
   readonly startedAt: string;
   readonly completedAt: string;
@@ -46,11 +48,43 @@ export interface ToolDefinition {
 
 export interface ApprovalConsumer {
   consume(tool: string, operation: string, parameters: Readonly<Record<string, unknown>>): string;
+  requestId?(approvalId: string): string | undefined;
 }
 
-const MAX_CALLS = 24;
-const MAX_RESULT_ROWS = 100;
-const MAX_RESULT_BYTES = 64 * 1024;
+/** Validates the exposed tool schema before any member of an approval batch executes. */
+export function validateEvidenceParameters(tool: ToolDefinition, parameters: Readonly<Record<string, unknown>>): void {
+  const properties = tool.parameters.properties as Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+  const required = tool.parameters.required as readonly string[];
+  if (Object.keys(parameters).some((key) => !Object.hasOwn(properties, key)) ||
+      required.some((key) => !Object.hasOwn(parameters, key))) {
+    throw new CommunicationError("invalid-tool-parameters", `Invalid required or additional parameters for ${tool.name}`);
+  }
+  for (const [key, value] of Object.entries(parameters)) {
+    if (!matchesSchema(value, properties[key]!)) {
+      throw new CommunicationError("invalid-tool-parameters", `Invalid ${tool.name} parameter: ${key}`);
+    }
+  }
+}
+
+function matchesSchema(value: unknown, schema: Readonly<Record<string, unknown>>): boolean {
+  if (Array.isArray(schema.anyOf)) {
+    return schema.anyOf.some((part: Readonly<Record<string, unknown>>) => matchesSchema(value, part));
+  }
+  if (schema.type === "string") {
+    return typeof value === "string" &&
+      (typeof schema.minLength !== "number" || value.length >= schema.minLength) &&
+      (typeof schema.maxLength !== "number" || value.length <= schema.maxLength);
+  }
+  if (schema.type !== "number" && schema.type !== "integer") return false;
+  return typeof value === "number" && Number.isFinite(value) &&
+    (schema.type !== "integer" || Number.isSafeInteger(value)) &&
+    (typeof schema.minimum !== "number" || value >= schema.minimum) &&
+    (typeof schema.maximum !== "number" || value <= schema.maximum);
+}
+
+const MAX_CALLS = COMMUNICATION_LIMITS.evidenceCalls;
+const MAX_RESULT_ROWS = COMMUNICATION_LIMITS.resultRows;
+const MAX_RESULT_BYTES = COMMUNICATION_LIMITS.resultBytes;
 
 /**
  * Creates allowlisted read-only evidence operations for one neutral case.
@@ -93,6 +127,7 @@ export function createEvidenceTools(options: {
         operation,
         normalizedParameters,
         approvalId,
+        requestId: options.ledger.requestId?.(approvalId),
         status: "executed",
         startedAt,
         completedAt: clock().toISOString(),
@@ -106,6 +141,7 @@ export function createEvidenceTools(options: {
         operation,
         normalizedParameters,
         approvalId,
+        requestId: approvalId ? options.ledger.requestId?.(approvalId) : undefined,
         status: approvalId ? "error" : "blocked",
         startedAt,
         completedAt: clock().toISOString(),
@@ -134,30 +170,17 @@ export function createEvidenceTools(options: {
             ) as { sources?: readonly { rowCount?: number }[] };
             const rowCount =
               coverage.sources?.reduce((sum, source) => sum + (source.rowCount ?? 0), 0) ?? 0;
-            const onset = Number((incident as { incidentOnset?: unknown }).incidentOnset);
-            const queryGuidance = Number.isFinite(onset)
-              ? {
-                  metricAndLogTimeUnit: "epoch seconds",
-                  traceTimeUnit: "epoch milliseconds",
-                  baselineWindow: { startTime: onset - 300, endTime: onset },
-                  postOnsetWindow: { startTime: onset, endTime: onset + 300 },
-                  traceBaselineWindow: {
-                    startTime: (onset - 300) * 1000,
-                    endTime: onset * 1000,
-                  },
-                  tracePostOnsetWindow: {
-                    startTime: onset * 1000,
-                    endTime: (onset + 300) * 1000,
-                  },
-                }
-              : "Unavailable - incident onset is not numeric";
+            const timeUnits = {
+              metricsAndLogs: "epoch seconds",
+              traces: "epoch milliseconds",
+            };
             return result(
               "incident",
               2,
               2,
               false,
               {
-                incident, coverage, queryGuidance,
+                incident, coverage, timeUnits,
                 metricColumns: await readMetricColumns(options.caseRoot),
               },
               rowCount > 0,

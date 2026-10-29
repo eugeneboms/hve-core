@@ -6,12 +6,13 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 import {
-  EVALUATION_RUN_DIRECTORY, readJson, sha256, stableJson, writeJson,
+  EVALUATION_PROTOCOL, EVALUATION_RUN_DIRECTORY, readJson, sha256, stableJson, writeJson,
 } from "./contracts.mts";
 import type { TrialArtifact } from "./orchestrator.mts";
 import { redactArtifact } from "./redaction.mts";
 import { scorePersistedTrial, type TrialResult } from "./scoring.mts";
 import { createConditionSchedule, parseEvaluationMode, trialDirectory } from "./conditions.mts";
+import { rebindRedactedCommunication } from "./cli-orchestrator.mts";
 
 /** Redacts persisted session artifacts and recomputes every dependent hash and score. */
 export async function sanitizeRun(repositoryRoot: string, runId: string): Promise<{
@@ -31,11 +32,17 @@ export async function sanitizeRun(repositoryRoot: string, runId: string): Promis
   let replacements = 0;
   const summaryPath = join(runRoot, "evaluation-summary.json");
   const summary = await readJson<Record<string, unknown>>(summaryPath);
+  if (summary.protocol !== EVALUATION_PROTOCOL) {
+    throw new Error("Historical evaluation artifacts are immutable; start a new evaluation run instead of sanitizing in place");
+  }
   if (typeof summary.mode !== "string") {
     throw new Error("Sanitization requires a condition-aware evaluation summary");
   }
   const mode = parseEvaluationMode(summary.mode);
-
+  const pending: {
+    sessionRoot: string; artifact: TrialArtifact;
+    item: ReturnType<typeof createConditionSchedule>[number];
+  }[] = [];
   for (const item of createConditionSchedule(3, mode)) {
     const sessionRoot = trialDirectory(runRoot, item.caseId, item.trial, item.condition);
     let artifact: TrialArtifact;
@@ -47,8 +54,14 @@ export async function sanitizeRun(repositoryRoot: string, runId: string): Promis
       }
       throw error;
     }
+    if (artifact.protocol !== EVALUATION_PROTOCOL) {
+      throw new Error("Historical evaluation artifacts are immutable; no sessions were changed");
+    }
+    pending.push({ sessionRoot, artifact, item });
+  }
+  for (const { sessionRoot, artifact, item } of pending) {
     const redacted = redactArtifact(artifact, [repositoryRoot]);
-    const sanitized: TrialArtifact = {
+    const sanitized: TrialArtifact = rebindRedactedCommunication({
       ...redacted.value,
       redactionManifest: {
         applied: [...new Set([
@@ -57,7 +70,7 @@ export async function sanitizeRun(repositoryRoot: string, runId: string): Promis
         ])],
         replacements: artifact.redactionManifest.replacements + redacted.replacements,
       },
-    };
+    });
     await writeJson(join(sessionRoot, "session-artifact.json"), sanitized);
     const approvalLedger = await readOptional(join(sessionRoot, "fixture-approval-ledger.json"));
     const traces = await readOptional(join(sessionRoot, "mcp-tool-traces.json"));
