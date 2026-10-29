@@ -88,7 +88,7 @@ async function reportFixture(): Promise<{
     protocol: EVALUATION_PROTOCOL, messageId, caseId: "case-01", messageType: "final", report,
   });
   const parsed = parseModelMessages([response], { messageId, caseId: "case-01", condition: "with-skill" });
-  const event = { type: "assistant.message", data: { content: response } };
+  const event = { type: "assistant.message", data: { content: response, phase: "final_answer" } };
   const artifact: TrialArtifact & { cliCapture: Record<string, unknown> } = {
     schemaVersion: "2.0.0", protocol: EVALUATION_PROTOCOL, runId: "fixture", caseId: "case-01",
     condition: "with-skill", trial: 1,
@@ -418,7 +418,7 @@ test("labels debug outputs as harness diagnostics rather than efficacy evidence"
     const text = await readFile(path, "utf8");
     assert.match(text, /DEBUG RUN.*not skill efficacy evidence/);
     assert.match(text, /gpt-5\.6-luna/);
-    assert.match(text, /ad-hoc-v2/);
+    assert.ok(text.includes(EVALUATION_PROTOCOL));
     assert.doesNotMatch(text, /GPT-5\.6 Sol/);
   }
 });

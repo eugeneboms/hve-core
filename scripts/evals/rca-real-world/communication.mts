@@ -193,10 +193,16 @@ export function validateDiagnosticReport(value: unknown, condition: EvaluationCo
 /** Builds only transport instructions; it supplies no evidence-retrieval sequence or diagnostic method. */
 export function messageInstruction(context: MessageContext): string {
   return [
-    `Communication protocol ${EVALUATION_PROTOCOL}. Every invocation must contain exactly one authoritative JSON envelope in any public assistant message. Plain JSON and a json code fence are equivalent. Commentary may precede or follow it; do not emit a second envelope.`,
+    `Communication protocol ${EVALUATION_PROTOCOL}. Return exactly one authoritative JSON envelope as your CLI final answer (phase final_answer), never as commentary. Plain JSON and a json code fence are equivalent. Optional commentary must precede the final answer and contain no machine envelope. Do not emit a second envelope or any message after the final answer.`,
     `Copy these identity fields exactly: ${JSON.stringify({ protocol: EVALUATION_PROTOCOL, messageId: context.messageId, caseId: context.caseId })}.`,
     `For evidence use messageType "evidence_request" and approvalRequests, with no report. For completion use messageType "final" and report, with no approvalRequests. For an evidence blocker use messageType "blocked", a nonempty reason, and report with candidate.target null.`,
+    `An evidence_request is the complete final answer for this invocation, not the end of the investigation. End the invocation immediately after returning it. The host cannot execute evidence calls until this CLI process returns. It will validate and simulate approval, execute the exact calls, and resume this session with their results. Do not wait, emit a blocked report, or conclude that requested evidence is unavailable merely because results have not arrived in this invocation.`,
     `The report has exactly: candidate {target: canonical identifier or null for abstention, mechanism: string or null, confidence: nonempty string including reason}, authority {simulated:true, productionAuthorization:false}, limitations: string[], narrative: your complete human-readable answer${context.condition === "with-skill" ? ', finding {status:"not-established" or "ready-for-human-sign-off", target:canonical identifier or null, mechanism:string or null}; an unestablished finding must use null for target and mechanism. Keep all activated-skill sections in narrative' : ""}.`,
+    ...(context.condition === "with-skill" ? [
+      `Both final and blocked reports MUST include structured report.finding; the narrative alone does not supply it. For blocked use finding {"status":"not-established","target":null,"mechanism":null}. Do not produce the skill's completion sections while handing off an evidence_request; return those sections inside report.narrative only when the investigation ends with final or blocked.`,
+    ] : [
+      "Both final and blocked reports MUST omit report.finding; it is a skilled-only field.",
+    ]),
     `Each model message is bounded to ${COMMUNICATION_LIMITS.messageBytes} UTF-8 bytes. Missing or ambiguous envelopes, missing diagnostic fields and contradictory authority fail explicitly; prose is not an implicit final answer.`,
   ].join("\n");
 }

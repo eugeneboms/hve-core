@@ -19,6 +19,7 @@ import {
 } from "../../../evals/rca-real-world/approval.mts";
 import { trialDirectory, type EvaluationCondition } from "../../../evals/rca-real-world/conditions.mts";
 import type { EvidenceToolTrace } from "../../../evals/rca-real-world/evidence-tools.mts";
+import { rebindRedactedCommunication } from "../../../evals/rca-real-world/cli-orchestrator.mts";
 
 function output(): string {
   return [
@@ -88,12 +89,14 @@ function artifact(options: {
     const text = JSON.stringify({
       protocol: EVALUATION_PROTOCOL, messageId: messageId(index + 1), caseId: "case-01", ...message,
     });
-    const publicMessages = ["Public commentary.", text, "Public follow-up commentary."];
+    const publicMessages = ["Public commentary.", text];
     const parsed = parseModelMessages(publicMessages, {
       messageId: messageId(index + 1), caseId: "case-01", condition,
     });
     responses.push(...publicMessages);
-    const turnEvents = publicMessages.map((content) => ({ type: "assistant.message", data: { content } }));
+    const turnEvents = publicMessages.map((content, index) => ({
+      type: "assistant.message", data: { content, phase: index === 0 ? "commentary" : "final_answer" },
+    }));
     events.push(...turnEvents);
     cliCapture[`turn${index + 1}`] = {
       exitCode: 0, timedOut: false, stdout: turnEvents.map((event) => JSON.stringify(event)).join("\n"),
@@ -372,6 +375,23 @@ test("distinguishes valid blocked reports from technical protocol and execution 
   }
 });
 
+for (const condition of ["with-skill", "without-skill"] as const) {
+  for (const phase of ["commentary", "analysis", undefined]) {
+    test(`scoring and redaction reject captured envelope phase ${String(phase)}: ${condition}`, () => {
+      const value = artifact({ condition, noTools: true });
+      const capture = value.cliCapture.turn1;
+      assert.ok(capture && typeof capture === "object" && "stdout" in capture && typeof capture.stdout === "string");
+      const events = capture.stdout.split("\n").map((line) => JSON.parse(line));
+      events[1].data.phase = phase;
+      capture.stdout = events.map((event) => JSON.stringify(event)).join("\n");
+      const result = scoreTrial(value, truth, "fixture");
+      assert.equal(result.integrity, "fail");
+      assert.ok(result.integrityFailures.some((failure) => /phase|final answer/.test(failure)));
+      assert.throws(() => rebindRedactedCommunication(value), /phase|final answer/);
+    });
+  }
+}
+
 test("checks all public responses for leakage and validates exact profile provenance", () => {
   const value = artifact();
   assert.equal(scoreTrial({
@@ -382,7 +402,7 @@ test("checks all public responses for leakage and validates exact profile proven
   } };
   assert.equal(scoreTrial(debug, truth, "fixture").integrity, "pass");
   assert.equal(scoreTrial(debug, truth, "fixture").profile, "debug");
-  for (const protocol of ["ad-hoc-v1", undefined]) {
+  for (const protocol of ["ad-hoc-v1", "ad-hoc-v2", undefined]) {
     assert.equal(scoreTrial({ ...value, protocol }, truth, "fixture").integrity, "fail");
   }
   assert.equal(scoreTrial({ ...debug, requestedProfile: {
@@ -406,13 +426,15 @@ test("refuses persisted historical rescoring without changing prior result bytes
   context.after(() => rm(runRoot, { recursive: true, force: true }));
   const sessionRoot = trialDirectory(runRoot, "case-01", 1, "with-skill");
   await mkdir(sessionRoot, { recursive: true });
-  await writeJson(join(sessionRoot, "session-artifact.json"), { ...artifact(), protocol: "ad-hoc-v1" });
   await writeJson(join(sessionRoot, "trial-result.json"), { historical: "retain byte-for-byte" });
   const before = await readFile(join(sessionRoot, "trial-result.json"), "utf8");
-  await assert.rejects(scorePersistedTrial({
-    runRoot, caseId: "case-01", trial: 1, condition: "with-skill",
-    scorerPath: join(process.cwd(), "scripts", "evals", "rca-real-world", "scoring.mts"),
-  }), /Historical trial artifacts are immutable/);
+  for (const protocol of ["ad-hoc-v1", "ad-hoc-v2"]) {
+    await writeJson(join(sessionRoot, "session-artifact.json"), { ...artifact(), protocol });
+    await assert.rejects(scorePersistedTrial({
+      runRoot, caseId: "case-01", trial: 1, condition: "with-skill",
+      scorerPath: join(process.cwd(), "scripts", "evals", "rca-real-world", "scoring.mts"),
+    }), /Historical trial artifacts are immutable/);
+  }
   assert.equal(await readFile(join(sessionRoot, "trial-result.json"), "utf8"), before);
 });
 

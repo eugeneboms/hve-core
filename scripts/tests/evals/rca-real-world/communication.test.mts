@@ -4,11 +4,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PassThrough } from "node:stream";
-import { boundedCliOutput } from "../../../evals/rca-real-world/cli-orchestrator.mts";
+import { boundedCliOutput, parseCliEvents, parseCliResponse } from "../../../evals/rca-real-world/cli-orchestrator.mts";
 import { parseApprovalRequest } from "../../../evals/rca-real-world/approval.mts";
 import { EVALUATION_PROTOCOL } from "../../../evals/rca-real-world/contracts.mts";
 import {
-  COMMUNICATION_LIMITS, parseModelMessages, validateDiagnosticReport,
+  COMMUNICATION_LIMITS, messageInstruction, parseModelMessages, validateDiagnosticReport,
   type DiagnosticReport,
 } from "../../../evals/rca-real-world/communication.mts";
 
@@ -144,4 +144,79 @@ test("enforces UTF-8 bytes, not character counts, without clipping input", () =>
   });
   assert.ok(text.length < COMMUNICATION_LIMITS.messageBytes);
   assert.throws(() => parseModelMessages([text], context), /byte limit/);
+});
+
+const cliMessage = (content: string, phase: unknown) => ({ type: "assistant.message", data: { content, phase } });
+
+for (const fenced of [false, true]) {
+  test(`CLI handoff accepts one ${fenced ? "fenced" : "raw"} final-answer envelope after commentary`, () => {
+    const text = fenced ? `\`\`\`json\n${approval}\n\`\`\`` : approval;
+    const parsed = parseCliResponse([
+      cliMessage("Requesting bounded evidence.", "commentary"), cliMessage(text, "final_answer"),
+    ], context);
+    assert.equal(parsed.message.messageType, "evidence_request");
+    assert.equal(parsed.messageIndex, 1);
+    assert.deepEqual(parsed.messages, ["Requesting bounded evidence.", text]);
+    assert.equal(parsed.messageHash, parseModelMessages([text], context).messageHash);
+  });
+}
+
+for (const phase of [undefined, null, "analysis", 1]) {
+  test(`CLI handoff rejects missing or unsupported phase ${String(phase)}`, () => {
+    assert.throws(() => parseCliResponse([cliMessage(approval, phase)], context), /known CLI phase/);
+  });
+}
+
+test("CLI handoff rejects a request in commentary even with a plain final answer", () => {
+  for (const events of [
+    [cliMessage(approval, "commentary")],
+    [cliMessage(approval, "commentary"), cliMessage("Waiting for evidence.", "final_answer")],
+  ]) assert.throws(() => parseCliResponse(events, context), /final answer, not commentary/);
+});
+
+test("CLI handoff rejects commentary after the final answer and multiple final answers", () => {
+  assert.throws(() => parseCliResponse([
+    cliMessage(approval, "final_answer"), cliMessage("Waiting.", "commentary"),
+  ], context), /cannot follow/);
+  assert.throws(() => parseCliResponse([
+    cliMessage("Preceding final.", "final_answer"), cliMessage(approval, "final_answer"),
+  ], context), /exactly one CLI final answer/);
+});
+
+test("replays commentary request followed by a malformed blocked final without selecting or repairing either", () => {
+  const { finding, ...missingFinding } = report;
+  const blocker = JSON.stringify({
+    ...identity, messageType: "blocked", reason: "Requested evidence has not returned.", report: missingFinding,
+  });
+  const capture = [
+    { type: "assistant.turn_start", data: {} },
+    { type: "assistant.message", data: { content: "", toolRequests: [{ name: "skill" }], phase: "commentary" } },
+    { type: "tool.execution_complete", data: { success: true } },
+    cliMessage(approval, "commentary"),
+    cliMessage(blocker, "final_answer"),
+    { type: "assistant.turn_end", data: {} },
+    { type: "result", data: {} },
+  ].map((event) => JSON.stringify(event)).join("\n");
+  assert.throws(() => parseCliResponse(parseCliEvents(capture), context), /received 2/);
+  assert.throws(() => parseCliResponse([cliMessage(blocker, "final_answer")], context), /finding/);
+  const corrected = JSON.stringify({
+    ...identity, messageType: "blocked", reason: "Source inaccessible.", report,
+  });
+  assert.equal(parseCliResponse([cliMessage(corrected, "final_answer")], context).message.messageType, "blocked");
+  assert.throws(() => parseCliResponse([
+    cliMessage(approval, "commentary"), cliMessage(corrected, "final_answer"),
+  ], context), /received 2/);
+});
+
+test("transport instructions distinguish a request handoff from final and blocked reports", () => {
+  const skilled = messageInstruction(context);
+  assert.match(skilled, /phase final_answer/);
+  assert.match(skilled, /never as commentary/);
+  assert.match(skilled, /End the invocation immediately/);
+  assert.match(skilled, /host cannot execute evidence calls until this CLI process returns/);
+  assert.match(skilled, /Both final and blocked reports MUST include structured report.finding/);
+  assert.match(skilled, /Do not produce the skill's completion sections while handing off/);
+  const baseline = messageInstruction({ ...context, condition: "without-skill" });
+  assert.match(baseline, /Both final and blocked reports MUST omit report.finding/);
+  assert.doesNotMatch(baseline, /Keep all activated-skill sections/);
 });

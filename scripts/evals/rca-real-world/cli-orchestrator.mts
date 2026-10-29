@@ -27,7 +27,7 @@ import { trialDirectory, type EvaluationCondition } from "./conditions.mts";
 import { isolatedCliEnvironment, verifyCliIsolation, type CliIsolation } from "./cli-isolation.mts";
 import {
   COMMUNICATION_LIMITS, EVIDENCE_OPERATIONS, CommunicationError, messageInstruction, parseModelMessages,
-  type CommunicationAudit, type DiagnosticReport,
+  type CommunicationAudit, type DiagnosticReport, type MessageContext,
 } from "./communication.mts";
 
 export interface CliInvocationResult {
@@ -46,8 +46,9 @@ export type CliInvoker = (
 
 interface CliJsonEvent {
   readonly type?: string;
-  readonly data?: { readonly content?: string };
+  readonly data?: { readonly content?: string; readonly phase?: unknown };
   readonly content?: string;
+  readonly phase?: unknown;
   readonly [key: string]: unknown;
 }
 
@@ -157,9 +158,9 @@ export async function runCliTrial(
         throw new Error(`Copilot CLI turn ${turn} failed: ${invocation.stderr || invocation.stdout}`);
       }
       successfulInvocation = true;
-      const publicMessages = extractAssistantMessages(turnEvents);
+      const publicMessages = extractAssistantMessages(turnEvents).map(({ content }) => content);
       responses.push(...publicMessages);
-      const parsed = parseModelMessages(publicMessages, context);
+      const parsed = parseCliResponse(turnEvents, context);
       const message = parsed.message;
       const requests = message.messageType === "evidence_request"
         ? message.approvalRequests.map((item, index) => ({
@@ -267,7 +268,7 @@ export function rebindRedactedCommunication<T extends TrialArtifact>(artifact: T
     if (!capture || typeof capture !== "object" || !("stdout" in capture) || typeof capture.stdout !== "string") {
       throw new CommunicationError("missing-capture", "Accepted message is missing its original turn-local capture");
     }
-    const parsed = parseModelMessages(extractAssistantMessages(parseCliEvents(capture.stdout)), {
+    const parsed = parseCliResponse(parseCliEvents(capture.stdout), {
       messageId: turn.messageId, caseId: artifact.caseId, condition: artifact.condition,
     });
     if (parsed.messageIndex !== turn.messageIndex) {
@@ -431,12 +432,38 @@ function commonArgs(workspace: string, usagePath: string, model: string): readon
   ];
 }
 
-function extractAssistantMessages(events: readonly CliJsonEvent[]): readonly string[] {
+/** Requires the sole envelope to end the invocation in one explicit final-answer message; commentary cannot authorize calls. */
+export function parseCliResponse(
+  events: readonly CliJsonEvent[], context: MessageContext,
+): ReturnType<typeof parseModelMessages> & { readonly messages: readonly string[] } {
+  const assistantMessages = extractAssistantMessages(events);
+  const messages = assistantMessages.map(({ content }) => content);
+  const parsed = parseModelMessages(messages, context);
+  if (assistantMessages.some(({ phase }) => phase !== "commentary" && phase !== "final_answer")) {
+    throw new CommunicationError("invalid-message-phase", "Every public assistant message requires a known CLI phase");
+  }
+  if (assistantMessages[parsed.messageIndex]!.phase !== "final_answer") {
+    throw new CommunicationError("invalid-envelope-phase", "The authoritative envelope must be the CLI final answer, not commentary");
+  }
+  if (assistantMessages.filter(({ phase }) => phase === "final_answer").length !== 1) {
+    throw new CommunicationError("ambiguous-final-answer", "Each invocation requires exactly one CLI final answer");
+  }
+  if (parsed.messageIndex !== assistantMessages.length - 1) {
+    throw new CommunicationError("invalid-message-order", "Public assistant messages cannot follow the final-answer handoff");
+  }
+  return { ...parsed, messages };
+}
+
+function extractAssistantMessages(events: readonly CliJsonEvent[]): readonly { readonly content: string; readonly phase: unknown }[] {
   return events.map((event) => {
-    if (event?.type === "assistant.message" && typeof event.data?.content === "string") return event.data.content;
-    if ((event?.type === "assistant" || event?.type === "message") && typeof event.content === "string") return event.content;
+    if (event?.type === "assistant.message" && typeof event.data?.content === "string") {
+      return { content: event.data.content, phase: event.data.phase };
+    }
+    if ((event?.type === "assistant" || event?.type === "message") && typeof event.content === "string") {
+      return { content: event.content, phase: event.phase };
+    }
     return undefined;
-  }).filter((content): content is string => typeof content === "string" && content.trim().length > 0);
+  }).filter((message): message is { content: string; phase: unknown } => message !== undefined && message.content.trim().length > 0);
 }
 
 async function readTraceFile(path: string): Promise<readonly unknown[]> {

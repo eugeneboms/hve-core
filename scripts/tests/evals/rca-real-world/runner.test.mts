@@ -8,6 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import { describe, test } from "node:test";
 
 import { runCliTrial, type CliInvoker } from "../../../evals/rca-real-world/cli-orchestrator.mts";
+import type { DiagnosticReport } from "../../../evals/rca-real-world/communication.mts";
 import {
   EVALUATION_CASE_IDS,
   EVALUATION_PROTOCOL,
@@ -211,14 +212,14 @@ function fakeCliInvoker(): CliInvoker {
       return result(
         `${JSON.stringify({
           type: "assistant.message",
-          data: { content: approvalResponse(caseId) },
+          data: { content: approvalResponse(caseId), phase: "final_answer" },
         })}\n`, prompt, (await readdir(options.cwd)).includes(".github"),
       );
     }
     return result(
       `${JSON.stringify({
         type: "assistant.message",
-        data: { content: !(await readdir(options.cwd)).includes(".github")
+        data: { phase: "final_answer", content: !(await readdir(options.cwd)).includes(".github")
           ? [
             `- Candidate target: ${serviceByCase[caseId]}`,
             `- Candidate mechanism: ${faultByCase[caseId]}`,
@@ -289,7 +290,7 @@ function result(stdout: string, prompt?: string, skilled = true) {
           limitations: ["Human review pending."], narrative: content,
         },
       };
-      return JSON.stringify({ ...event, data: { content: JSON.stringify({ ...identity, ...payload }) } });
+      return JSON.stringify({ ...event, data: { ...event.data, content: JSON.stringify({ ...identity, ...payload }) } });
     }).join("\n");
   }
   return { exitCode: 0, stdout, stderr: "", durationMs: 1, timedOut: false };
@@ -365,7 +366,7 @@ for (const condition of ["with-skill", "without-skill"] as const) {
             const request = JSON.parse(focusedApprovalResponse("case-02").split("```json\n")[1]!.split("\n```")[0]!);
             request.approvalRequests[0].parameters.startTime = 1699999877;
             request.approvalRequests[0].parameters.endTime = 1700000987;
-            return result(`${JSON.stringify({ type: "assistant.message", data: {
+            return result(`${JSON.stringify({ type: "assistant.message", data: { phase: "final_answer",
               content: strategy === "no-tools"
                 ? "- Candidate target: No defensible candidate\n- Candidate mechanism: Unassessed\n- Working confidence: Low; evidence not collected.\nSimulated fixture; no production authorization."
                 : `\`\`\`json\n${JSON.stringify(request)}\n\`\`\``,
@@ -625,7 +626,7 @@ for (const condition of ["with-skill", "without-skill"] as const) {
         cliInvoker: async (args, options) => {
           if (!args.includes("-p")) return fake(args, options);
           modelTurns += 1;
-          return result(`${JSON.stringify({ type: "assistant.message", data: {
+          return result(`${JSON.stringify({ type: "assistant.message", data: { phase: "final_answer",
             content: `\`\`\`json\n${JSON.stringify(envelope)}\n\`\`\``,
           } })}\n`, args[args.indexOf("-p") + 1], condition === "with-skill");
         },
@@ -649,7 +650,7 @@ test("persists failed arbitrary tool execution rather than discarding its trace"
     repositoryRoot: resolve("."), runRoot: root, runId: "invalid-window",
     caseId: "case-02", trial: 1, clock: () => NOW,
     cliInvoker: async (args, options) => args.includes("-p")
-      ? result(`${JSON.stringify({ type: "assistant.message", data: {
+      ? result(`${JSON.stringify({ type: "assistant.message", data: { phase: "final_answer",
         content: `\`\`\`json\n${JSON.stringify(envelope)}\n\`\`\``,
       } })}\n`, args[args.indexOf("-p") + 1])
       : fake(args, options),
@@ -756,7 +757,7 @@ test("separates valid machine diagnostics from poorly formatted skill narratives
     cliInvoker: async (args, options) => {
       if (args.some((arg) => arg.startsWith("TOOL RESULTS"))) {
         return result(`${JSON.stringify({
-          type: "assistant.message", data: { content: "No defensible diagnosis." },
+          type: "assistant.message", data: { content: "No defensible diagnosis.", phase: "final_answer" },
         })}\n`, args[args.indexOf("-p") + 1], (await readdir(options.cwd)).includes(".github"));
       }
       return fake(args, options);
@@ -833,7 +834,7 @@ describe("versioned host communication", () => {
 
   for (const condition of ["with-skill", "without-skill"] as const) {
     for (const fenced of [false, true]) {
-      test(`executes ${condition} requests before closing commentary (${fenced ? "fenced" : "raw"})`, async (context) => {
+      test(`executes ${condition} final-answer requests after commentary (${fenced ? "fenced" : "raw"})`, async (context) => {
         const root = await preparedRun();
         context.after(() => rm(root, { recursive: true, force: true }));
         const fake = fakeCliInvoker();
@@ -846,9 +847,8 @@ describe("versioned host communication", () => {
             const event = JSON.parse(value.stdout);
             if (fenced) event.data.content = `\`\`\`json\n${event.data.content}\n\`\`\``;
             return result([
-              JSON.stringify({ type: "assistant.message", data: { content: "Opening commentary." } }),
+              JSON.stringify({ type: "assistant.message", data: { content: "Opening commentary.", phase: "commentary" } }),
               JSON.stringify(event),
-              JSON.stringify({ type: "assistant.message", data: { content: "Waiting for any requested evidence." } }),
             ].join("\n"));
           },
         });
@@ -867,6 +867,132 @@ describe("versioned host communication", () => {
         assert.equal(batch.results[0].resultBytes, Buffer.byteLength(stableJson(batch.results[0].result)!, "utf8"));
       });
     }
+  }
+
+  for (const condition of ["with-skill", "without-skill"] as const) {
+    for (const terminal of ["final", "blocked"] as const) {
+      test(`hands off raw final-answer requests and resumes with results: ${condition}/${terminal}`, async (context) => {
+        const root = await preparedRun();
+        context.after(() => rm(root, { recursive: true, force: true }));
+        const fake = fakeCliInvoker();
+        let modelTurns = 0;
+        const artifact = await runCliTrial({
+          repositoryRoot: resolve("."), runRoot: root, runId: "raw-handoff",
+          caseId: "case-02", trial: 1, condition, clock: () => NOW,
+          cliInvoker: async (args, options) => {
+            if (!args.includes("-p")) return fake(args, options);
+            modelTurns++;
+            const prompt = args[args.indexOf("-p") + 1]!;
+            assert.match(prompt, /End the invocation immediately/);
+            const identity = {
+              protocol: EVALUATION_PROTOCOL, caseId: "case-02",
+              messageId: `raw-handoff/${condition}/case-02/trial-1/turn-${modelTurns}`,
+            };
+            const report: DiagnosticReport = {
+              candidate: { target: null, mechanism: null, confidence: "None; no causal attribution established." },
+              ...(condition === "with-skill" ? {
+                finding: { status: "not-established" as const, target: null, mechanism: null },
+              } : {}),
+              authority: { simulated: true, productionAuthorization: false },
+              limitations: ["The scope read alone does not establish a cause."],
+              narrative: "No causal finding established. Human review remains pending.",
+            };
+            if (modelTurns > 1) {
+              assert.equal(modelTurns, 2);
+              assert.ok(args.some((arg) => arg.startsWith("--resume=")));
+              assert.match(prompt, /^TOOL RESULTS/);
+              const batch = JSON.parse(await readFile(join(
+                trialDirectory(root, "case-02", 1, condition), "host-evidence-turn-1.json",
+              ), "utf8"));
+              assert.equal(batch.complete, true);
+              assert.equal(batch.results.length, 1);
+              assert.equal(batch.results[0].tool, "read_incident_scope");
+            }
+            const message = modelTurns === 1 ? {
+              ...identity, messageType: "evidence_request", approvalRequests: [{
+                tool: "read_incident_scope", operation: "read", parameters: {},
+                evidenceSought: "Incident scope and coverage", target: "case-02",
+                scope: "current neutral case only", maximumCallCount: 1,
+                expectedRisk: "read-only bounded fixture evidence", expiresAt: "2026-10-19T20:15:00.000Z",
+              }],
+            } : {
+              ...identity, messageType: terminal, report,
+              ...(terminal === "blocked" ? { reason: "Scope alone cannot distinguish causal hypotheses." } : {}),
+            };
+            return {
+              exitCode: 0, timedOut: false, durationMs: 1, stderr: "",
+              stdout: [
+                { type: "assistant.turn_start", data: {} },
+                { type: "assistant.message", data: { phase: "commentary", content: "Processing this investigation step." } },
+                { type: "assistant.message", data: { phase: "final_answer", content: JSON.stringify(message) } },
+                { type: "assistant.turn_end", data: {} },
+                { type: "result", data: {} },
+              ].map((event) => JSON.stringify(event)).join("\n"),
+            };
+          },
+        });
+        assert.equal(modelTurns, 2);
+        assert.equal(artifact.endReason, "complete", artifact.error ?? "Expected a complete session");
+        assert.equal(artifact.communication?.outcome, terminal);
+        assert.equal(artifact.evidenceToolTraces.length, 1);
+        assert.equal(artifact.communication?.turns.length, 2);
+        assert.ok(artifact.communication?.turns.every((turn) => turn.messageIndex === 1));
+        const ledger = artifact.approvalLedger;
+        assert.ok(ledger && typeof ledger === "object" && "records" in ledger && Array.isArray(ledger.records));
+        assert.equal(ledger.records.length, 1);
+        const approval: unknown = ledger.records[0];
+        assert.ok(approval && typeof approval === "object" && "consumedCallCount" in approval);
+        assert.equal(approval.consumedCallCount, 1);
+      });
+    }
+
+    test(`rejects raw commentary request plus blocked final before evidence execution: ${condition}`, async (context) => {
+      const root = await preparedRun();
+      context.after(() => rm(root, { recursive: true, force: true }));
+      const fake = fakeCliInvoker();
+      let modelTurns = 0;
+      const artifact = await runCliTrial({
+        repositoryRoot: resolve("."), runRoot: root, runId: "raw-conflict",
+        caseId: "case-02", trial: 1, condition, clock: () => NOW,
+        cliInvoker: async (args, options) => {
+          if (!args.includes("-p")) return fake(args, options);
+          modelTurns++;
+          const identity = {
+            protocol: EVALUATION_PROTOCOL, caseId: "case-02",
+            messageId: `raw-conflict/${condition}/case-02/trial-1/turn-1`,
+          };
+          return {
+            exitCode: 0, timedOut: false, durationMs: 1, stderr: "",
+            stdout: [
+              { type: "assistant.message", data: { phase: "commentary", content: JSON.stringify({
+                ...identity, messageType: "evidence_request", approvalRequests: [{
+                  tool: "read_incident_scope", operation: "read", parameters: {},
+                  evidenceSought: "Incident scope", target: "case-02",
+                  scope: "current neutral case only", maximumCallCount: 1,
+                  expectedRisk: "read-only bounded fixture evidence", expiresAt: "2026-10-19T20:15:00.000Z",
+                }],
+              }) } },
+              { type: "assistant.message", data: { phase: "final_answer", content: JSON.stringify({
+                ...identity, messageType: "blocked", reason: "Requested evidence has not returned.",
+                report: {
+                  candidate: { target: null, mechanism: null, confidence: "None; pending evidence." },
+                  authority: { simulated: true, productionAuthorization: false },
+                  limitations: ["No results received."], narrative: "Blocked pending requested results.",
+                },
+              }) } },
+            ].map((event) => JSON.stringify(event)).join("\n"),
+          };
+        },
+      });
+      assert.equal(modelTurns, 1);
+      assert.equal(artifact.communication?.errorCode, "ambiguous-envelope");
+      assert.equal(artifact.evidenceToolTraces.length, 0);
+      const ledger = artifact.approvalLedger;
+      assert.ok(ledger && typeof ledger === "object" && "records" in ledger && Array.isArray(ledger.records));
+      assert.equal(ledger.records.length, 0);
+      assert.equal(artifact.report, undefined);
+      assert.equal(artifact.responses?.length, 2);
+    });
   }
 
   for (const failure of [

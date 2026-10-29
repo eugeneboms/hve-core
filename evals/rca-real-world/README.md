@@ -73,7 +73,7 @@ The preparation command creates two separate roots:
 * `model-visible/` contains neutrally named incident metadata and deterministic evidence stores.
 * `scorer-only/` contains source provenance, hashes, and held-out service and fault labels.
 
-The `ad-hoc-v2` protocol compares two ad hoc investigations in the same Copilot CLI host.
+The `ad-hoc-v3` protocol compares two ad hoc investigations in the same Copilot CLI host.
 Each condition runs in a fresh temporary workspace and independent model session. Only the
 `with-skill` condition receives the three packaged RCA skills. The `without-skill` condition
 receives no skill bundle, no custom agent, and no RCA reasoning procedure. Both receive the
@@ -84,14 +84,15 @@ because they are evidence; packaging metadata never identifies one as the expect
 
 The CLI uses a private home and configuration for every session. The host disables hooks and IDE
 autoconnection, suppresses custom instruction loading, disables built-in MCP servers, and exposes
-no model-callable tools. Evidence calls are instead validated and executed by the host. Inherited
+no model-callable evidence tools. Native skill activation remains available for the staged skilled
+package. Evidence calls are instead validated and executed by the host. Inherited
 skills can still be discovered from a temporary directory's ancestors: the harness enumerates
 them, disables all except the exact staged RCA package in private settings, then verifies the
 enabled skill and plugin inventories. The baseline must have zero enabled skills and plugins.
 Unsupported inventory commands, malformed responses, or unexpected enabled capabilities fail
 closed before inference. No user configuration is changed or copied into the workspace.
 
-This establishes no runtime skill access, not absence of skill-related material in model training.
+For the baseline, this establishes no enabled runtime skills, not absence of skill-related material in model training.
 The skilled bundle is supplied explicitly in the initial prompt; inherited custom instructions
 are suppressed for both conditions. CLI prompts are sent through stdin rather than command-line
 arguments, avoiding platform command-line length limits without changing prompt content.
@@ -104,11 +105,19 @@ conditions; they do not have to be used. Actual retrieved evidence can differ be
 what to retrieve is part of the measured behavior.
 
 The shared interface is host-mediated JSON, not native model-callable MCP tools. Each invocation
-returns exactly one versioned envelope: `evidence_request`, `final`, or `blocked`. The host supplies
+returns exactly one versioned envelope: `evidence_request`, `final`, or `blocked`. The envelope must
+be the invocation's sole CLI `final_answer` message and its last public assistant message.
+Optional `commentary` messages may precede it but must not contain envelopes. The host supplies
 the exact case and invocation identity. Raw JSON and JSON code fences are equivalent; the host
-checks all public assistant messages, not only the last. Commentary can follow a request without
-discarding it. Multiple authoritative envelopes, missing identities, malformed fields, and
-conflicting request/final messages are explicit protocol failures, never implicit final answers.
+checks all public assistant messages, not only the last. Missing or unknown phases, envelopes in
+commentary, multiple authoritative envelopes, missing identities, malformed fields, and conflicting
+request/final messages are explicit protocol failures, never implicit final answers.
+
+An `evidence_request` ends the current CLI invocation, not the investigation. The host cannot
+execute the requested calls until that process returns. After validating and executing the batch,
+it resumes the same session with results. The model must not emit a second envelope or declare
+evidence unavailable merely because results have not arrived before the request handoff.
+Execution, redaction validation, and scoring use the same phase-aware decoder.
 
 An evidence request contains exact `approvalRequests`; the host validates the complete batch's
 tool names, operations, parameter schemas, scope, call counts, and expiries before execution.
@@ -124,6 +133,9 @@ abstains. Skilled reports additionally retain a separate structured finding (Set
 skill's narrative sections. Machine diagnosis does not depend on Markdown headings or exact
 disclaimer wording; narrative workflow conformance remains a separate check. Missing diagnostic
 fields are protocol failures, not abstentions. A blocked outcome requires a reason and abstention.
+Both skilled `final` and `blocked` reports require `report.finding`; a blocked report must use
+`{"status":"not-established","target":null,"mechanism":null}`. A finding described only in the
+narrative does not satisfy this field. Baseline reports must omit `finding`.
 A model can finish without tools or after any evidence batch. No protocol repair makes a model
 call or retries a failed session automatically.
 
@@ -235,7 +247,7 @@ remain in each trial result; compatibility and unsupported claims require human 
 
 Earlier runs used prescribed scope, pre/post-comparison, and focused-query stages; some also
 requested a two-category baseline. Those saved outputs do not establish ad hoc performance.
-Start a new run ID for `ad-hoc-v2`; continuation of older protocols is rejected. The immutable
+Start a new run ID for `ad-hoc-v3`; continuation of older protocols, including `ad-hoc-v2`, is rejected. The immutable
 input fingerprint also rejects changed prompts or scoring. Preserve prior evidence and do not
 pool old and new protocols, or debug and production results, as one experiment.
 

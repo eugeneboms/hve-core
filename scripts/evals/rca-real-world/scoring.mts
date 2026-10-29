@@ -20,11 +20,11 @@ import {
 import type { TrialArtifact } from "./orchestrator.mts";
 import { trialDirectory, type EvaluationCondition } from "./conditions.mts";
 import {
-  COMMUNICATION_LIMITS, CommunicationError, EVIDENCE_OPERATIONS, parseModelMessages, validateDiagnosticReport,
+  COMMUNICATION_LIMITS, CommunicationError, EVIDENCE_OPERATIONS, validateDiagnosticReport,
   type DiagnosticReport,
 } from "./communication.mts";
 import { redactApprovalParameters, type ApprovalRequestItem } from "./approval.mts";
-import { parseCliEvents } from "./cli-orchestrator.mts";
+import { parseCliEvents, parseCliResponse } from "./cli-orchestrator.mts";
 
 export type GateResult = true | false | "unassessable" | "not-applicable";
 
@@ -506,15 +506,10 @@ function auditCommunication(artifact: TrialArtifact): {
           capture.exitCode !== 0 || capture.timedOut !== false || typeof capture.stdout !== "string") {
         throw new Error("turn identity or successful raw invocation capture is missing");
       }
-      const messages = parseCliEvents(capture.stdout).flatMap((event) => {
-        const content = event.type === "assistant.message" ? event.data?.content
-          : event.type === "assistant" || event.type === "message" ? event.content : undefined;
-        return typeof content === "string" && content.trim() ? [content] : [];
-      });
-      publicMessages.push(...messages);
-      const parsed = parseModelMessages(messages, {
+      const parsed = parseCliResponse(parseCliEvents(capture.stdout), {
         messageId, caseId: artifact.caseId, condition: artifact.condition,
       });
+      publicMessages.push(...parsed.messages);
       if (turn.messageIndex !== parsed.messageIndex || turn.messageHash !== parsed.messageHash ||
           turn.messageType !== parsed.message.messageType) {
         throw new Error("selected message index, hash, or type does not match the captured turn");
